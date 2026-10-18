@@ -1,0 +1,6 @@
+{
+  "name": "FishReader Studio — Android Overlay & Local Neural TTS",
+  "description": "Simulateur interactif Android et architecture Kotlin complète pour FishReader : widget flottant escamotable Jetpack Compose, extraction AccessibilityService, fallback OCR ML Kit et synthèse vocale hors ligne Sherpa-ONNX / Piper TTS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
