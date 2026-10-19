@@ -1,16 +1,17 @@
 import type {Metadata} from 'next';
-import {Plus_Jakarta_Sans, DM_Sans, JetBrains_Mono} from 'next/font/google';
+import {Literata, Source_Sans_3, JetBrains_Mono} from 'next/font/google';
 import './globals.css';
 
-const plusJakarta = Plus_Jakarta_Sans({
+const literata = Literata({
   subsets: ['latin'],
-  weight: ['500', '600', '700'],
-  variable: '--font-display',
+  weight: ['400', '500', '600', '700'],
+  style: ['normal', 'italic'],
+  variable: '--font-serif',
 });
 
-const dmSans = DM_Sans({
+const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
+  weight: ['400', '500', '600', '700'],
   variable: '--font-sans',
 });
 
@@ -41,13 +42,13 @@ export const metadata: Metadata = {
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html
-      lang="fr"
+      lang="fr-CA"
       suppressHydrationWarning
-      className={`${plusJakarta.variable} ${dmSans.variable} ${jetbrainsMono.variable} dark`}
+      className={`${literata.variable} ${sourceSans3.variable} ${jetbrainsMono.variable}`}
     >
       <body
         suppressHydrationWarning
-        className="bg-[#0B0F17] text-slate-100 font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200"
+        className="bg-[#F7F2E8] text-[#2A241D] font-sans antialiased selection:bg-[#F3DC9A] selection:text-[#2A241D]"
       >
         {children}
       </body>

@@ -276,6 +276,10 @@ export default function AndroidOverlaySimulator() {
     [getCacheKey]
   );
 
+  const playSentenceAtRef = useRef<(startIndex: number) => Promise<void>>(
+    async () => {}
+  );
+
   /**
    * Plays sentence `startIndex` using Web Audio API with real-time Speech Rate (`playbackRate`)
    * and Pitch Semitones (`detune`), stabilized via refs so switching presets never recreates this callback.
@@ -321,7 +325,7 @@ export default function AndroidOverlaySimulator() {
         pauseTimeoutRef.current = window.setTimeout(() => {
           if (activePlaybackTokenRef.current !== myToken) return;
           if (startIndex + 1 < currentApp.extractedSentences.length) {
-            void playSentenceAt(startIndex + 1);
+            void playSentenceAtRef.current(startIndex + 1);
           } else {
             setIsPlaying(false);
           }
@@ -391,7 +395,7 @@ export default function AndroidOverlaySimulator() {
               );
               pauseTimeoutRef.current = window.setTimeout(() => {
                 if (activePlaybackTokenRef.current !== myToken) return;
-                void playSentenceAt(nextIdx);
+                void playSentenceAtRef.current(nextIdx);
               }, dynamicPauseMs);
             } else {
               setIsPlaying(false);
@@ -420,7 +424,7 @@ export default function AndroidOverlaySimulator() {
           if (activePlaybackTokenRef.current !== myToken) return;
           const nextIdx = startIndex + 1;
           if (nextIdx < currentApp.extractedSentences.length) {
-            void playSentenceAt(nextIdx);
+            void playSentenceAtRef.current(nextIdx);
           } else {
             setIsPlaying(false);
           }
@@ -438,9 +442,12 @@ export default function AndroidOverlaySimulator() {
     ]
   );
 
+  useEffect(() => {
+    playSentenceAtRef.current = playSentenceAt;
+  }, [playSentenceAt]);
+
   // Warm up sentence 0 in background when app or voice changes
   useEffect(() => {
-    setPrefetchedIndices([]);
     void fetchOrGetCachedSentenceAudio(
       currentApp,
       0,

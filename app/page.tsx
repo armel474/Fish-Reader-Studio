@@ -1,7 +1,15 @@
 'use client';
 
-import React from 'react';
-import {Download, CheckCircle2, ArrowRight} from 'lucide-react';
+import React, {useState} from 'react';
+import {
+  Download,
+  CheckCircle2,
+  Smartphone,
+  Code2,
+  Palette,
+} from 'lucide-react';
+import CommercialMobileAppExperience from '@/components/CommercialMobileAppExperience';
+import DesignerHandoffSection from '@/components/DesignerHandoffSection';
 import AndroidOverlaySimulator from '@/components/AndroidOverlaySimulator';
 import ProsodyAndMobileDeploySection from '@/components/ProsodyAndMobileDeploySection';
 import KotlinCodeWorkbench from '@/components/KotlinCodeWorkbench';
@@ -10,8 +18,20 @@ import {
   KOTLIN_PROJECT_FILES,
   INTEGRATION_STEPS,
 } from '@/lib/kotlin-project-data';
+import {
+  FrThemeId,
+  FR_THEMES,
+  NB,
+  FrSegmented,
+} from '@/lib/fishreader-ds';
 
 export default function FishReaderStudioPage() {
+  const [workspaceMode, setWorkspaceMode] = useState<
+    'COMMERCIAL_APP' | 'DESIGN_SYSTEM' | 'DEVELOPER_STUDIO'
+  >('COMMERCIAL_APP');
+  const [themeId, setThemeId] = useState<FrThemeId>('papier');
+  const theme = FR_THEMES[themeId];
+
   const handleDownloadFullProject = () => {
     const bundleContent = KOTLIN_PROJECT_FILES.map(
       (f) =>
@@ -30,59 +50,73 @@ export default function FishReaderStudioPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0B0F17] text-slate-100">
+    <div
+      className={`min-h-screen flex flex-col transition-colors duration-150 ${theme.paperBg} ${theme.inkText}`}
+    >
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
-      <header className="sticky top-0 z-40 flex items-center justify-between gap-8 px-6 lg:px-10 py-4 bg-[#0B0F17]/90 backdrop-blur-md border-b border-slate-800/80">
-        {/* Zone 1: Single text element wordmark */}
+      <header
+        className={`sticky top-0 z-40 flex items-center justify-between gap-8 px-6 lg:px-10 py-3.5 border-b ${theme.paperBg} ${theme.ruleBorder}`}
+      >
+        {/* Zone 1: Single text element wordmark in Literata */}
         <a
           href="#top"
-          className="text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+          className={`font-[family-name:var(--font-serif)] font-semibold text-[20px] leading-[24px] tracking-tight whitespace-nowrap shrink-0 ${theme.inkText}`}
         >
-          FishReader Studio
+          Fish Reader
         </a>
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
+        {/* Zone 2: 4 concise single-line text navigation links */}
+        <nav className="hidden md:flex items-center gap-6 text-[14px] font-semibold">
           <a
-            href="#simulateur"
-            className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            href="#application-mobile"
+            onClick={() => setWorkspaceMode('COMMERCIAL_APP')}
+            className={`hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 ${
+              workspaceMode === 'COMMERCIAL_APP'
+                ? theme.accentText
+                : `${theme.inkMutedText} hover:${theme.inkText}`
+            }`}
           >
-            Simulateur &amp; App Mobile
+            Maquettes Interactives
+          </a>
+          <a
+            href="#cahier-design"
+            onClick={() => setWorkspaceMode('DESIGN_SYSTEM')}
+            className={`hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 ${
+              workspaceMode === 'DESIGN_SYSTEM'
+                ? theme.accentText
+                : `${theme.inkMutedText} hover:${theme.inkText}`
+            }`}
+          >
+            Système de Design
           </a>
           <a
             href="#prosodie-apk"
-            className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            className={`hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 ${theme.inkMutedText} hover:${theme.inkText}`}
           >
-            Prosodie &amp; Test Téléphone
+            Voix &amp; APK
           </a>
           <a
-            href="#code-kotlin"
-            className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
+            href="#espace-developpeur"
+            onClick={() => setWorkspaceMode('DEVELOPER_STUDIO')}
+            className={`hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 ${
+              workspaceMode === 'DEVELOPER_STUDIO'
+                ? theme.accentText
+                : `${theme.inkMutedText} hover:${theme.inkText}`
+            }`}
           >
-            Code Kotlin (11 fichiers)
-          </a>
-          <a
-            href="#heuristiques"
-            className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Pipeline Heuristique
-          </a>
-          <a
-            href="#guide-integration"
-            className="hover:text-white hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
-          >
-            Guide Android Studio
+            Code Kotlin (13 fichiers)
           </a>
         </nav>
 
         {/* Zone 3: 1 primary action */}
         <div className="flex items-center shrink-0">
           <button
+            type="button"
             onClick={handleDownloadFullProject}
-            className="px-4 py-2 text-xs font-semibold text-slate-950 bg-cyan-500 hover:bg-cyan-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className={`min-h-[40px] px-4 rounded-[8px] text-[13px] font-semibold flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 active:translate-y-[1px] ${theme.accentBg} ${theme.onAccentText}`}
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Exporter le Projet Kotlin</span>
+            <Download className="w-4 h-4" strokeWidth={1.5} />
+            <span>Exporter le projet Kotlin</span>
           </button>
         </div>
       </header>
@@ -90,241 +124,225 @@ export default function FishReaderStudioPage() {
       {/* Main Content Container (1440px Desktop Presence) */}
       <main
         id="top"
-        className="flex-1 max-w-7xl w-full mx-auto px-6 lg:px-10 py-10 space-y-20"
+        className="flex-1 max-w-7xl w-full mx-auto px-6 lg:px-10 py-8 space-y-14"
       >
-        {/* Hero Section */}
-        <section className="space-y-6">
-          {/* Clean Unboxed Metadata (Zero-Pill Discipline) */}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 font-mono">
-            <span className="text-cyan-400 font-medium">
-              Android API 30+ (Android 11 à 15)
+        {/* Hero Header + Editorial Theme Switcher + 3-Way Mode Switcher */}
+        <section className={`border-b pb-8 space-y-6 ${theme.ruleBorder}`}>
+          <div
+            className={`flex flex-wrap items-center gap-2 text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.inkMutedText}`}
+          >
+            <span className={theme.accentText}>
+              Design System · Papier, Sépia &amp; Nuit
             </span>
             <span aria-hidden="true">·</span>
-            <span>Piper VITS Medium/High (22.05 kHz)</span>
+            <span>Polices Literata &amp; Source Sans 3</span>
             <span aria-hidden="true">·</span>
-            <span>Contrôle Vitesse (0.75x–1.50x) &amp; Pitch</span>
+            <span>Bulle flottante à 6 états</span>
             <span aria-hidden="true">·</span>
-            <span>Installation APK Directe (Sans Play Store)</span>
+            <span>Architecture Android Jetpack Compose</span>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-end">
-            <div className="lg:col-span-8 space-y-4">
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white leading-[1.12] text-balance">
-                FishReader : Overlay Android, Rythme Prosodique VITS &amp;
-                Installation Directe sur Mobile
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
+            <div className="space-y-3 max-w-3xl">
+              <h1
+                className={`m-0 font-[family-name:var(--font-serif)] font-semibold text-[32px] sm:text-[40px] leading-[1.12] tracking-[-0.01em] text-balance ${theme.inkText}`}
+              >
+                Fish Reader — Lecteur vocal d’écran et bulle flottante Android
               </h1>
-              <p className="text-base text-slate-300 max-w-3xl leading-relaxed">
-                Application mobile Material 3 et superposition système
-                escamotable propulsées par{' '}
-                <code className="font-mono text-cyan-300">
-                  SherpaOnnxTtsManager.kt
-                </code>{' '}
-                et{' '}
-                <code className="font-mono text-cyan-300">
-                  ProsodyRhythmEngine.kt
-                </code>
-                . Inclut le réglage en direct de la vitesse de lecture (
-                <code className="font-mono text-cyan-300">0.75x à 1.50x</code>),
-                du pitch en demi-tons, les modèles{' '}
-                <code className="font-mono text-cyan-300">
-                  fr_FR-siwis-medium
-                </code>{' '}
-                et{' '}
-                <code className="font-mono text-cyan-300">
-                  en_US-lessac-high
-                </code>
-                , ainsi que le guide d&apos;installation APK sur votre téléphone
-                sans passer par le Play Store.
+              <p
+                className={`m-0 text-[16px] leading-[25px] ${theme.inkMutedText}`}
+              >
+                Explorez les deux maquettes de référence haute fidélité
+                (l’application compagnon et la bulle flottante à 6 états avec
+                sauts configurables en secondes ou en phrases), les jetons de
+                design officiels et le code Kotlin prêt pour Android Studio.
               </p>
             </div>
 
-            <div className="lg:col-span-4 flex flex-wrap lg:justify-end gap-3">
-              <a
-                href="#prosodie-apk"
-                className="px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs sm:text-sm flex items-center gap-2 transition-colors whitespace-nowrap shrink-0"
+            {/* Theme & Mode Controls */}
+            <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end gap-3 shrink-0">
+              {/* Theme Switcher: Papier / Sépia / Nuit */}
+              <div className="w-full sm:w-[270px]">
+                <FrSegmented
+                  label="Thème de l’interface"
+                  value={themeId}
+                  onChange={setThemeId}
+                  theme={theme}
+                  columnsClass="grid-cols-3"
+                  options={[
+                    {value: 'papier', label: 'Papier'},
+                    {value: 'sepia', label: 'Sépia'},
+                    {value: 'nuit', label: 'Nuit'},
+                  ]}
+                />
+              </div>
+
+              {/* 3-Way Workspace Mode Switcher */}
+              <div
+                className={`inline-flex flex-wrap p-[3px] gap-[2px] rounded-[8px] border ${theme.paperRaisedBg} ${theme.ruleBorder}`}
               >
-                <span>Prosodie &amp; Installer sur mon Téléphone</span>
-                <ArrowRight className="w-4 h-4" />
-              </a>
-              <a
-                href="#code-kotlin"
-                className="px-4 py-2.5 rounded-xl bg-[#111827] hover:bg-slate-800 border border-slate-700 text-slate-100 font-medium text-xs sm:text-sm transition-colors whitespace-nowrap shrink-0"
-              >
-                Voir les 11 fichiers Kotlin
-              </a>
-            </div>
-          </div>
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceMode('COMMERCIAL_APP')}
+                  className={`min-h-[40px] px-3.5 rounded-[6px] text-[13px] font-semibold flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                    workspaceMode === 'COMMERCIAL_APP'
+                      ? `${theme.accentBg} ${theme.onAccentText}`
+                      : `${theme.inkMutedText} hover:${theme.inkText}`
+                  }`}
+                >
+                  <Smartphone className="w-4 h-4" strokeWidth={1.5} />
+                  <span>Maquettes Interactives</span>
+                </button>
 
-          {/* 4-Column Architectural KPI Strip */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-800/80">
-            <div className="bg-[#111827] border border-slate-800/90 rounded-xl p-4">
-              <div className="text-xs text-slate-400">
-                Modèles Piper VITS Medium &amp; High
-              </div>
-              <div className="text-2xl font-bold font-mono text-white mt-1 tabular-nums">
-                22 050 Hz
-              </div>
-              <div className="text-xs text-slate-400 mt-1">
-                192 canaux latents · SIWIS &amp; Lessac High
-              </div>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceMode('DESIGN_SYSTEM')}
+                  className={`min-h-[40px] px-3.5 rounded-[6px] text-[13px] font-semibold flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                    workspaceMode === 'DESIGN_SYSTEM'
+                      ? `${theme.accentBg} ${theme.onAccentText}`
+                      : `${theme.inkMutedText} hover:${theme.inkText}`
+                  }`}
+                >
+                  <Palette className="w-4 h-4" strokeWidth={1.5} />
+                  <span>Système de Design &amp; Theme.kt</span>
+                </button>
 
-            <div className="bg-[#111827] border border-slate-800/90 rounded-xl p-4">
-              <div className="text-xs text-slate-400">
-                Vitesse &amp; Pitch Indépendants
-              </div>
-              <div className="text-2xl font-bold font-mono text-white mt-1 tabular-nums">
-                0.75x – 1.50x
-              </div>
-              <div className="text-xs text-slate-400 mt-1">
-                VITS Length Scale + AudioTrack Pitch
-              </div>
-            </div>
-
-            <div className="bg-[#111827] border border-slate-800/90 rounded-xl p-4">
-              <div className="text-xs text-slate-400">
-                Installation sur Téléphone
-              </div>
-              <div className="text-2xl font-bold font-mono text-emerald-400 mt-1 tabular-nums">
-                Sans Store
-              </div>
-              <div className="text-xs text-slate-400 mt-1">
-                APK Direct, QR Code Wi-Fi ou Cloud GitHub
-              </div>
-            </div>
-
-            <div className="bg-[#111827] border border-slate-800/90 rounded-xl p-4">
-              <div className="text-xs text-slate-400">
-                Confidentialité &amp; Réseau
-              </div>
-              <div className="text-2xl font-bold font-mono text-cyan-400 mt-1 tabular-nums">
-                100 % Local
-              </div>
-              <div className="text-xs text-slate-400 mt-1">
-                Aucune permission INTERNET dans le Manifest
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceMode('DEVELOPER_STUDIO')}
+                  className={`min-h-[40px] px-3.5 rounded-[6px] text-[13px] font-semibold flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                    workspaceMode === 'DEVELOPER_STUDIO'
+                      ? `${theme.accentBg} ${theme.onAccentText}`
+                      : `${theme.inkMutedText} hover:${theme.inkText}`
+                  }`}
+                >
+                  <Code2 className="w-4 h-4" strokeWidth={1.5} />
+                  <span>Studio Kotlin Android</span>
+                </button>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Section 01: Interactive Android Simulator (Overlay + Mobile App UI) */}
-        <section id="simulateur" className="scroll-mt-24 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="text-xs font-mono text-cyan-400">
-              01. Simulateur Interactif : Bulle Overlay + Interface Mobile
-              Material 3
-            </div>
-            <h2 className="text-2xl font-bold text-white mt-1">
-              Testez le Widget Flottant, l&apos;Application Mobile FishReader et
-              la Vitesse de Lecture
-            </h2>
-            <p className="text-sm text-slate-300 mt-1 max-w-3xl">
-              Utilisez le bouton <strong>« App Mobile FishReader »</strong> en
-              haut du téléphone simulé pour explorer la nouvelle interface
-              mobile Android (<code className="font-mono text-cyan-300">MainActivity.kt</code>
-              ) avec ses 3 onglets, ou restez sur{' '}
-              <strong>« Bulle Overlay Active »</strong> pour changer la vitesse
-              directement depuis la bulle flottante.
-            </p>
-          </div>
+        {/* SECTION 1: Interactive Prototypes (Companion App + 6-State Bubble) */}
+        {workspaceMode === 'COMMERCIAL_APP' && (
+          <section id="application-mobile" className="scroll-mt-24">
+            <CommercialMobileAppExperience
+              themeId={themeId}
+              onThemeChange={setThemeId}
+              onOpenDeveloperStudio={() => {
+                setWorkspaceMode('DEVELOPER_STUDIO');
+                const el = document.getElementById('espace-developpeur');
+                if (el) el.scrollIntoView({behavior: 'smooth'});
+              }}
+            />
+          </section>
+        )}
 
-          <AndroidOverlaySimulator />
-        </section>
+        {/* SECTION 2: Design System & Handoff Specifications */}
+        {workspaceMode === 'DESIGN_SYSTEM' && (
+          <section id="cahier-design" className="scroll-mt-24">
+            <DesignerHandoffSection themeId={themeId} />
+          </section>
+        )}
 
-        {/* Section 02: Prosody Rhythm Studio, High-Fidelity Piper Models & Direct Phone Installation */}
+        {/* Section 02: Voice Calibration & APK Installation */}
         <section id="prosodie-apk" className="scroll-mt-24 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="text-xs font-mono text-cyan-400">
-              02. Rythme Prosodique Sherpa-ONNX, Modèles VITS High/Medium &amp;
-              Test sur votre Téléphone
+          <div className={`border-b pb-4 ${theme.ruleBorder}`}>
+            <div
+              className={`text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+            >
+              02. Calibration Vocale &amp; Installation Mobile
             </div>
-            <h2 className="text-2xl font-bold text-white mt-1">
-              Calibrage Vitesse / Pitch et Installation sur Mobile sans Google
-              Play Store
+            <h2
+              className={`m-0 mt-1 font-[family-name:var(--font-serif)] font-semibold text-[26px] leading-[32px] ${theme.inkText}`}
+            >
+              Installer Fish Reader sur votre téléphone Android et calibrer les
+              voix
             </h2>
-            <p className="text-sm text-slate-300 mt-1 max-w-3xl">
-              Ajustez les paramètres de{' '}
-              <code className="font-mono text-cyan-300">
-                SherpaOnnxTtsManager.kt
-              </code>{' '}
-              et{' '}
-              <code className="font-mono text-cyan-300">
-                ProsodyRhythmEngine.kt
-              </code>
-              , découvrez comment configurer les modèles haute fidélité dans{' '}
-              <code className="font-mono text-cyan-300">assets/models/</code>, et
-              suivez les 3 méthodes gratuites pour installer{' '}
-              <code className="font-mono text-cyan-300">app-debug.apk</code> sur
-              votre smartphone.
-            </p>
           </div>
 
-          <ProsodyAndMobileDeploySection />
+          <div className="rounded-[14px] overflow-hidden bg-[#0B0F17] text-slate-100 p-6 border border-[#3A352E]">
+            <ProsodyAndMobileDeploySection />
+          </div>
         </section>
 
-        {/* Section 03: Complete Production Kotlin Codebase */}
-        <section id="code-kotlin" className="scroll-mt-24 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="text-xs font-mono text-cyan-400">
-              03. Code Source Natif Prêt pour la Production (11 Fichiers)
+        {/* Section 03: Developer Studio & Full Kotlin Codebase */}
+        <section id="espace-developpeur" className="scroll-mt-24 space-y-12">
+          {workspaceMode === 'DEVELOPER_STUDIO' && (
+            <div className="space-y-6">
+              <div className={`border-b pb-4 ${theme.ruleBorder}`}>
+                <div
+                  className={`text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+                >
+                  Inspecteur Technique d’Arborescence Android
+                </div>
+                <h2
+                  className={`m-0 mt-1 font-[family-name:var(--font-serif)] font-semibold text-[26px] leading-[32px] ${theme.inkText}`}
+                >
+                  Simulateur d’extraction AccessibilityNodeInfo &amp; Repli OCR
+                  ML Kit
+                </h2>
+              </div>
+              <div className="rounded-[14px] overflow-hidden bg-[#0B0F17] text-slate-100 p-6 border border-[#3A352E]">
+                <AndroidOverlaySimulator />
+              </div>
             </div>
-            <h2 className="text-2xl font-bold text-white mt-1">
-              Code Kotlin Complet : TtsManager, ProsodyRhythmEngine,
-              PiperModelAssetConfig, MainActivity &amp; Workflow APK
-            </h2>
-            <p className="text-sm text-slate-300 mt-1 max-w-3xl">
-              Inclut les nouveaux fichiers{' '}
-              <code className="font-mono text-cyan-300">
-                PiperModelAssetConfig.kt
-              </code>
-              ,{' '}
-              <code className="font-mono text-cyan-300">
-                ProsodyRhythmEngine.kt
-              </code>
-              ,{' '}
-              <code className="font-mono text-cyan-300">
-                SherpaOnnxTtsManager.kt
-              </code>
-              , la nouvelle interface mobile Material 3 dans{' '}
-              <code className="font-mono text-cyan-300">MainActivity.kt</code>{' '}
-              et le workflow GitHub Actions{' '}
-              <code className="font-mono text-cyan-300">build-apk.yml</code>.
-            </p>
+          )}
+
+          <div className="space-y-6">
+            <div className={`border-b pb-4 ${theme.ruleBorder}`}>
+              <div
+                className={`text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+              >
+                03. Code Source Android Natif Prêt pour la Production (13
+                Fichiers Kotlin)
+              </div>
+              <h2
+                className={`m-0 mt-1 font-[family-name:var(--font-serif)] font-semibold text-[26px] leading-[32px] ${theme.inkText}`}
+              >
+                Code Kotlin Complet{NB}: Theme.kt (Papier/Sépia/Nuit), Bulle
+                Compose, Accessibilité &amp; TTS
+              </h2>
+            </div>
+
+            <div className="rounded-[14px] overflow-hidden bg-[#0B0F17] text-slate-100 p-6 border border-[#3A352E]">
+              <KotlinCodeWorkbench />
+            </div>
           </div>
 
-          <KotlinCodeWorkbench />
-        </section>
-
-        {/* Section 04: Interactive Heuristic Filter Lab */}
-        <section id="heuristiques" className="scroll-mt-24 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="text-xs font-mono text-cyan-400">
-              04. Filtrage Heuristique &amp; Segmentation en Groupes de Souffle
+          {workspaceMode === 'DEVELOPER_STUDIO' && (
+            <div className="space-y-6">
+              <div className={`border-b pb-4 ${theme.ruleBorder}`}>
+                <div
+                  className={`text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+                >
+                  04. Filtrage Heuristique &amp; Découpage en Phrases
+                </div>
+                <h2
+                  className={`m-0 mt-1 font-[family-name:var(--font-serif)] font-semibold text-[26px] leading-[32px] ${theme.inkText}`}
+                >
+                  Laboratoire de nettoyage d’arborescence UI
+                </h2>
+              </div>
+              <div className="rounded-[14px] overflow-hidden bg-[#0B0F17] text-slate-100 p-6 border border-[#3A352E]">
+                <HeuristicLabSection />
+              </div>
             </div>
-            <h2 className="text-2xl font-bold text-white mt-1">
-              Laboratoire de test des règles de nettoyage d&apos;arborescence UI
-            </h2>
-            <p className="text-sm text-slate-300 mt-1 max-w-3xl">
-              Testez comment{' '}
-              <code className="font-mono text-cyan-300">
-                ScreenTextCleaner.kt
-              </code>{' '}
-              élimine les éléments parasites (barres système, compteurs de
-              likes, horodatages courts, boutons d&apos;action) avant d&apos;envoyer
-              les phrases au moteur prosodique.
-            </p>
-          </div>
-
-          <HeuristicLabSection />
+          )}
         </section>
 
-        {/* Section 05: Step-by-Step Integration Guide */}
+        {/* Section 04: Step-by-Step Integration Guide */}
         <section id="guide-integration" className="scroll-mt-24 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="text-xs font-mono text-cyan-400">
-              05. Synthèse d&apos;Architecture &amp; Déploiement Mobile
+          <div className={`border-b pb-4 ${theme.ruleBorder}`}>
+            <div
+              className={`text-[12px] leading-[18px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+            >
+              04. Guide de Compilation &amp; Déploiement Mobile
             </div>
-            <h2 className="text-2xl font-bold text-white mt-1">
+            <h2
+              className={`m-0 mt-1 font-[family-name:var(--font-serif)] font-semibold text-[26px] leading-[32px] ${theme.inkText}`}
+            >
               Récapitulatif des 4 étapes clés sur appareil physique
             </h2>
           </div>
@@ -333,19 +351,25 @@ export default function FishReaderStudioPage() {
             {INTEGRATION_STEPS.map((step) => (
               <div
                 key={step.number}
-                className="bg-[#111827] border border-slate-800 rounded-2xl p-6 flex flex-col justify-between space-y-4"
+                className={`rounded-[14px] border p-6 flex flex-col justify-between space-y-4 ${theme.paperRaisedBg} ${theme.ruleBorder}`}
               >
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-semibold text-cyan-400">
+                    <span
+                      className={`text-[12px] font-semibold uppercase tracking-[0.08em] ${theme.accentText}`}
+                    >
                       Étape {step.number}
                     </span>
-                    <span className="text-xs text-slate-400 font-mono">
+                    <span
+                      className={`text-[13px] tabular-nums ${theme.inkMutedText}`}
+                    >
                       {step.subtitle}
                     </span>
                   </div>
 
-                  <h3 className="text-lg font-semibold text-white">
+                  <h3
+                    className={`m-0 font-[family-name:var(--font-serif)] font-semibold text-[20px] leading-[26px] ${theme.inkText}`}
+                  >
                     {step.title}
                   </h3>
 
@@ -353,10 +377,10 @@ export default function FishReaderStudioPage() {
                     {step.details.map((detail, idx) => (
                       <li
                         key={idx}
-                        className="text-xs sm:text-sm text-slate-300 leading-relaxed flex items-start gap-2.5"
+                        className={`text-[14px] leading-[21px] flex items-start gap-2.5 ${theme.inkText}`}
                       >
-                        <span className="font-mono text-cyan-400 text-xs mt-0.5">
-                          •
+                        <span className={`font-semibold ${theme.accentText}`}>
+                          ·
                         </span>
                         <span>{detail}</span>
                       </li>
@@ -364,8 +388,13 @@ export default function FishReaderStudioPage() {
                   </ul>
                 </div>
 
-                <div className="pt-3 border-t border-slate-800/90 flex items-start gap-2 text-xs text-emerald-300">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div
+                  className={`pt-3 border-t flex items-start gap-2 text-[13px] ${theme.ruleBorder} ${theme.accentText}`}
+                >
+                  <CheckCircle2
+                    className="w-4 h-4 shrink-0 mt-0.5"
+                    strokeWidth={1.5}
+                  />
                   <span>{step.verificationCheck}</span>
                 </div>
               </div>
@@ -374,18 +403,21 @@ export default function FishReaderStudioPage() {
         </section>
       </main>
 
-      {/* Quiet Footer */}
-      <footer className="border-t border-slate-800/80 py-6 px-6 lg:px-10 mt-12">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
+      {/* Quiet Editorial Footer */}
+      <footer className={`border-t py-6 px-6 lg:px-10 mt-12 ${theme.ruleBorder}`}>
+        <div
+          className={`max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-[13px] ${theme.inkMutedText}`}
+        >
           <div>
-            FishReader Studio · Architecture Android Kotlin, Jetpack Compose,
-            ML Kit OCR v2 &amp; Sherpa-ONNX Piper VITS High/Medium
+            Fish Reader · Système de design éditorial (Papier, Sépia, Nuit) &amp;
+            Architecture Android Kotlin
           </div>
           <button
+            type="button"
             onClick={handleDownloadFullProject}
-            className="text-cyan-400 hover:text-cyan-300 font-medium transition-colors"
+            className={`font-semibold hover:underline cursor-pointer ${theme.accentText}`}
           >
-            Télécharger l&apos;archive complète du code Kotlin (.txt)
+            Télécharger l’archive complète du code Kotlin (.txt)
           </button>
         </div>
       </footer>
