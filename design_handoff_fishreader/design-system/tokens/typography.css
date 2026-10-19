@@ -1,0 +1,24 @@
+/* Fish Reader Studio — typographie. Literata pour lire, Source Sans 3 pour l'interface. */
+:root {
+  --font-serif: Literata, Georgia, "Times New Roman", serif;
+  --font-sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-reading: var(--font-serif);
+  --font-ui: var(--font-sans);
+  --type-display: 600 40px/44px var(--font-serif);
+  --type-title: 600 28px/34px var(--font-serif);
+  --type-reading: 400 19px/30px var(--font-serif);
+  --type-reading-small: 400 16px/26px var(--font-serif);
+  --type-ui-label: 600 14px/20px var(--font-sans);
+  --type-ui-body: 400 15px/22px var(--font-sans);
+  --type-ui-caption: 400 13px/18px var(--font-sans);
+  --tracking-display: -0.01em;
+  --tracking-eyebrow: 0.08em;
+  --measure-reading: 66ch;
+}
+.display { font-family: var(--font-serif); font-size: 40px; line-height: 44px; font-weight: 600; letter-spacing: -0.01em; }
+.title { font-family: var(--font-serif); font-size: 28px; line-height: 34px; font-weight: 600; }
+.reading { font-family: var(--font-serif); font-size: 19px; line-height: 30px; font-weight: 400; }
+.reading-small { font-family: var(--font-serif); font-size: 16px; line-height: 26px; font-weight: 400; }
+.ui-label { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 600; }
+.ui-body { font-family: var(--font-sans); font-size: 15px; line-height: 22px; font-weight: 400; }
+.ui-caption { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 400; }

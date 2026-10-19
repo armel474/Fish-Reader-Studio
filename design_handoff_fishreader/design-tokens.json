@@ -1,0 +1,31 @@
+{
+  "themes": {
+    "papier": { "paper": "#F7F2E8", "paperRaised": "#FFFCF5", "ink": "#2A241D", "inkMuted": "#6B6155", "rule": "#E2D8C6", "accent": "#1F5F63", "onAccent": "#FFFCF5", "highlight": "#F3DC9A", "danger": "#A3392B" },
+    "sepia": { "paper": "#EFE3CC", "paperRaised": "#F6ECD9", "ink": "#3B2F22", "inkMuted": "#6A5843", "rule": "#D9C7A6", "accent": "#1D5458", "onAccent": "#FFFCF5", "highlight": "#E6C97F", "danger": "#97342A" },
+    "nuit": { "paper": "#1C1A17", "paperRaised": "#26231F", "ink": "#ECE4D6", "inkMuted": "#A89E8F", "rule": "#3A352E", "accent": "#7FB8B3", "onAccent": "#1C1A17", "highlight": "#5A4A1F", "danger": "#E08A7C" }
+  },
+  "fonts": { "serif": "Literata (400/500/600)", "sans": "Source Sans 3 (400/500/600)", "numerals": "tabular (tnum)" },
+  "type": {
+    "display": { "font": "serif", "weight": 600, "size": 40, "lineHeight": 44, "tracking": -0.01 },
+    "title": { "font": "serif", "weight": 600, "size": 28, "lineHeight": 34 },
+    "mobileTitle": { "font": "serif", "weight": 600, "size": 26, "lineHeight": 32 },
+    "headerTitle": { "font": "serif", "weight": 600, "size": 20, "lineHeight": 24 },
+    "reading": { "font": "serif", "weight": 400, "size": 19, "lineHeight": 30, "adjustable": [16, 24] },
+    "uiLabel": { "font": "sans", "weight": 600, "size": 14, "lineHeight": 20 },
+    "uiBody": { "font": "sans", "weight": 400, "size": 15, "lineHeight": 22 },
+    "uiCaption": { "font": "sans", "weight": 400, "size": 13, "lineHeight": 18 },
+    "eyebrow": { "font": "sans", "weight": 600, "size": 12, "lineHeight": 18, "tracking": 0.08, "uppercase": true }
+  },
+  "spacing": [4, 8, 12, 16, 24, 40],
+  "radius": { "sm": 4, "md": 8, "lg": 14, "pill": 999, "segmentInner": 6 },
+  "targets": { "min": 44, "primary": 48, "bubble": 56, "playLarge": 64 },
+  "bars": { "header": 52, "tabBar": 60, "player": 60 },
+  "motion": { "colorMs": 150, "sentenceHighlightMs": 250, "progressMs": 300, "snapMs": 250, "easing": "default, no bounce" },
+  "speeds": [0.75, 1.0, 1.15, 1.25, 1.5],
+  "skip": { "seconds": { "min": 5, "max": 120, "step": 5, "default": 15, "presets": [5, 10, 15, 30] }, "sentences": { "min": 1, "max": 10, "step": 1, "default": 1, "presets": [1, 2, 3, 5] } },
+  "voices": [
+    { "id": "clara", "name": "Clara", "label": "Français (Québec) · Studio" },
+    { "id": "thomas", "name": "Thomas", "label": "Français (Québec) · Posé" },
+    { "id": "emma", "name": "Emma", "label": "English (US)" }
+  ]
+}

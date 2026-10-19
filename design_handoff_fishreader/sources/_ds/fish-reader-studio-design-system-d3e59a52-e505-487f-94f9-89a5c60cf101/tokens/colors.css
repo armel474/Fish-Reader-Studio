@@ -1,0 +1,48 @@
+/* Fish Reader Studio — couleurs. Trois thèmes : Papier (light, défaut), Sépia, Nuit. Toujours le jeton, jamais la valeur. */
+:root, [data-theme="light"] {
+  --paper: #f7f2e8;
+  --paper-raised: #fffcf5;
+  --ink: #2a241d;
+  --ink-muted: #6b6155;
+  --rule: #e2d8c6;
+  --accent: #1f5f63;
+  --on-accent: #fffcf5;
+  --highlight: #f3dc9a;
+  --danger: #a3392b;
+}
+[data-theme="sepia"] {
+  --paper: #efe3cc;
+  --paper-raised: #f6ecd9;
+  --ink: #3b2f22;
+  --ink-muted: #6a5843;
+  --rule: #d9c7a6;
+  --accent: #1d5458;
+  --on-accent: #fffcf5;
+  --highlight: #e6c97f;
+  --danger: #97342a;
+}
+[data-theme="dark"] {
+  --paper: #1c1a17;
+  --paper-raised: #26231f;
+  --ink: #ece4d6;
+  --ink-muted: #a89e8f;
+  --rule: #3a352e;
+  --accent: #7fb8b3;
+  --on-accent: #1c1a17;
+  --highlight: #5a4a1f;
+  --danger: #e08a7c;
+}
+:root {
+  --surface-page: var(--paper);
+  --surface-card: var(--paper-raised);
+  --surface-panel: var(--paper-raised);
+  --text-body: var(--ink);
+  --text-muted: var(--ink-muted);
+  --text-on-accent: var(--on-accent);
+  --border-hairline: var(--rule);
+  --border-control: var(--ink-muted);
+  --action-primary: var(--accent);
+  --focus-ring: var(--accent);
+  --reading-highlight: var(--highlight);
+  --status-danger: var(--danger);
+}

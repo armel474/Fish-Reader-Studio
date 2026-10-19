@@ -1,0 +1,7 @@
+/* Fish Reader Studio — webfonts (self-hosted, latin subset) */
+@font-face{font-family:'Literata';font-weight:400;font-style:normal;font-display:swap;src:url('../fonts/literata-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Literata';font-weight:500;font-style:normal;font-display:swap;src:url('../fonts/literata-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Literata';font-weight:600;font-style:normal;font-display:swap;src:url('../fonts/literata-latin-600-normal.woff2') format('woff2');}
+@font-face{font-family:'Source Sans 3';font-weight:400;font-style:normal;font-display:swap;src:url('../fonts/source-sans-3-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Source Sans 3';font-weight:500;font-style:normal;font-display:swap;src:url('../fonts/source-sans-3-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Source Sans 3';font-weight:600;font-style:normal;font-display:swap;src:url('../fonts/source-sans-3-latin-600-normal.woff2') format('woff2');}
