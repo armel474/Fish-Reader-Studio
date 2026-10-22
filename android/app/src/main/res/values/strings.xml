@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fish Reader</string>
+    <string name="accessibility_service_label">Fish Reader — Lecture d’écran</string>
+    <string name="accessibility_service_description">Permet à la bulle flottante Fish Reader de lire à voix haute le texte affiché à l’écran lorsque vous appuyez sur le bouton Lire.</string>
+</resources>

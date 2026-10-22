@@ -1,0 +1,53 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.fishreadv2'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "app.fishreadv2"
+        minSdk 26
+        targetSdk 34
+        versionCode 12
+        versionName "1.2.0"
+    }
+
+    signingConfigs {
+        releaseConfig {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            def ksPass = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            def keyAliasName = System.getenv("ANDROID_KEY_ALIAS")
+            def keyPass = System.getenv("ANDROID_KEY_PASSWORD")
+            if (ksPath && ksPass && keyAliasName && keyPass) {
+                storeFile file(ksPath)
+                storePassword ksPass
+                keyAlias keyAliasName
+                keyPassword keyPass
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (System.getenv("ANDROID_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.releaseConfig
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // Pure Android SDK framework implementation (no external runtime dependencies required)
+}
