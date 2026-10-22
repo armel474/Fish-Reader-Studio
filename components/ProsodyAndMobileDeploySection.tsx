@@ -19,6 +19,7 @@ import {
 
 interface PiperHighFidelityModel {
   id: string;
+  voiceId: 'clara' | 'thomas' | 'nicolas' | 'emma';
   name: string;
   language: 'fr' | 'en';
   qualityTier: 'MEDIUM (22.05 kHz)' | 'HIGH / LARGE VITS (22.05 kHz)';
@@ -37,7 +38,8 @@ interface PiperHighFidelityModel {
 const PIPER_HF_MODELS: PiperHighFidelityModel[] = [
   {
     id: 'fr-siwis-medium',
-    name: 'FR · Piper SIWIS Medium (Recommandé FR)',
+    voiceId: 'clara',
+    name: 'Voix 1/4 · Clara — FR · Piper SIWIS Medium (Féminine Studio)',
     language: 'fr',
     qualityTier: 'MEDIUM (22.05 kHz)',
     onnxFilename: 'fr_FR-siwis-medium.onnx',
@@ -49,12 +51,13 @@ const PIPER_HF_MODELS: PiperHighFidelityModel[] = [
     recommendedNoiseScaleW: 0.72,
     recommendedLengthScale: 0.96,
     voiceCharacter:
-      'Enregistré en studio acoustique (corpus SIWIS). Diction française éditoriale très fluide, liaisons naturelles et absence totale de grésillement métallique.',
+      'Voix 1/4 enregistrée en studio acoustique (corpus SIWIS). Diction française éditoriale très fluide, liaisons naturelles, constance inter-paragraphe et zéro grésillement en fin de phrase.',
     geminiVoicePreview: 'Kore',
   },
   {
     id: 'fr-tom-medium',
-    name: 'FR · Piper Tom Medium (Masculine Grave)',
+    voiceId: 'thomas',
+    name: 'Voix 2/4 · Thomas — FR · Piper Tom Medium (Masculine Grave)',
     language: 'fr',
     qualityTier: 'MEDIUM (22.05 kHz)',
     onnxFilename: 'fr_FR-tom-medium.onnx',
@@ -66,12 +69,31 @@ const PIPER_HF_MODELS: PiperHighFidelityModel[] = [
     recommendedNoiseScaleW: 0.7,
     recommendedLengthScale: 0.98,
     voiceCharacter:
-      'Voix masculine posée et chaleureuse, idéale pour l’écoute prolongée d’articles de presse ou de rapports professionnels sans fatigue auditive.',
+      'Voix 2/4 masculine posée, grave et enveloppante, idéale pour l’écoute prolongée d’articles de presse ou de rapports professionnels avec timbre verrouillé d’un paragraphe à l’autre.',
     geminiVoicePreview: 'Charon',
   },
   {
+    id: 'en-cori-high',
+    voiceId: 'nicolas',
+    name: 'Voix 3/4 · Nicolas — FR · Piper UPMC Medium (Masculine Claire)',
+    language: 'fr',
+    qualityTier: 'MEDIUM (22.05 kHz)',
+    onnxFilename: 'fr_FR-upmc-medium.onnx',
+    assetFolderPath: 'app/src/main/assets/models/vits-piper-fr_FR-upmc-medium/',
+    downloadArchiveName: 'vits-piper-fr_FR-upmc-medium.tar.bz2',
+    sizeMb: '63 Mo (28 Mo INT8)',
+    hiddenChannels: 192,
+    recommendedNoiseScale: 0.6,
+    recommendedNoiseScaleW: 0.72,
+    recommendedLengthScale: 0.96,
+    voiceCharacter:
+      'Voix 3/4 masculine claire, vive et articulée, recommandée pour les courriels, les fils techniques et l’actualité quotidienne.',
+    geminiVoicePreview: 'Puck',
+  },
+  {
     id: 'en-lessac-high',
-    name: 'EN · Piper Lessac High (Large VITS)',
+    voiceId: 'emma',
+    name: 'Voix 4/4 · Emma — EN · Piper Lessac High (Large VITS US)',
     language: 'en',
     qualityTier: 'HIGH / LARGE VITS (22.05 kHz)',
     onnxFilename: 'en_US-lessac-high.onnx',
@@ -83,25 +105,8 @@ const PIPER_HF_MODELS: PiperHighFidelityModel[] = [
     recommendedNoiseScaleW: 0.74,
     recommendedLengthScale: 0.97,
     voiceCharacter:
-      'Architecture VITS Large à 22.05 kHz (au lieu de 16 kHz sur amy-low). Restitue les inflexions de fin de phrase et les respirations avec une fidélité studio.',
+      'Voix 4/4 d’architecture VITS Large à 22.05 kHz. Restitue les inflexions anglaises avec des transitions de ponctuation silencieuses et normalisées.',
     geminiVoicePreview: 'Zephyr',
-  },
-  {
-    id: 'en-cori-high',
-    name: 'EN · Piper Cori High (Studio UK)',
-    language: 'en',
-    qualityTier: 'HIGH / LARGE VITS (22.05 kHz)',
-    onnxFilename: 'en_GB-cori-high.onnx',
-    assetFolderPath: 'app/src/main/assets/models/vits-piper-en_GB-cori-high/',
-    downloadArchiveName: 'vits-piper-en_GB-cori-high.tar.bz2',
-    sizeMb: '114 Mo (42 Mo INT8)',
-    hiddenChannels: 192,
-    recommendedNoiseScale: 0.6,
-    recommendedNoiseScaleW: 0.72,
-    recommendedLengthScale: 0.96,
-    voiceCharacter:
-      'Voix britannique haute définition extrêmement articulée, recommandée pour les fils techniques et la documentation en anglais.',
-    geminiVoicePreview: 'Puck',
   },
 ];
 
@@ -111,9 +116,10 @@ export default function ProsodyAndMobileDeploySection() {
   const activeModel =
     PIPER_HF_MODELS.find((m) => m.id === selectedModelId) || PIPER_HF_MODELS[0];
 
-  // Live Prosody & Rhythm Sliders
-  const [speechRate, setSpeechRate] = useState<number>(1.05);
-  const [pitchSemitones, setPitchSemitones] = useState<number>(-0.5);
+  // Live Prosody & Rhythm Sliders (WPM driven)
+  const [targetWpm, setTargetWpm] = useState<number>(165);
+  const speechRate = Math.round((targetWpm / 155) * 100) / 100;
+  const [pitchSemitones, setPitchSemitones] = useState<number>(0.0);
   const [pauseScale, setPauseScale] = useState<number>(1.0);
   const [noiseScale, setNoiseScale] = useState<number>(0.6);
   const [noiseScaleW, setNoiseScaleW] = useState<number>(0.72);
@@ -166,8 +172,8 @@ export default function ProsodyAndMobileDeploySection() {
     setIsSynthesizing(true);
     const sampleText =
       activeModel.language === 'fr'
-        ? "Voici le nouveau rythme prosodique de FishReader : chaque virgule marque une courte respiration, les deux-points préparent l'explication, et la vitesse ainsi que la hauteur tonale s'ajustent sans aucune distorsion robotique."
-        : 'Here is the upgraded prosodic rhythm in FishReader: commas introduce a natural micro-breath, colons pace complex explanations, and both speech rate and pitch adjust smoothly.';
+        ? "Voici le nouveau rythme prosodique de FishReader à débit naturel : chaque virgule marque une courte respiration, et la cadence en mots par minute s'ajuste par durée phonémique sans aucune voix aiguë."
+        : 'Here is the upgraded prosodic rhythm in FishReader: commas introduce a natural micro-breath, and words-per-minute speed adjusts phoneme duration without any pitch-shifting.';
 
     try {
       const res = await fetch('/api/tts', {
@@ -177,6 +183,9 @@ export default function ProsodyAndMobileDeploySection() {
           text: sampleText,
           language: activeModel.language,
           voiceName: activeModel.geminiVoicePreview,
+          voiceId: activeModel.voiceId,
+          speed: speechRate,
+          wpm: targetWpm,
         }),
       });
       if (!res.ok) throw new Error('Erreur TTS');
@@ -202,9 +211,13 @@ export default function ProsodyAndMobileDeploySection() {
       const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      // Apply Speech Rate Scaling & Pitch Semitone Detune via Web Audio API
+
+      // Pilotage du rythme : dans Piper VITS / Sherpa-ONNX, length_scale module la durée des voyelles/phonèmes
+      // SANS pitch-shifting (zéro effet chipmunk). Pour reproduire fidèlement cette invariance acoustique
+      // dans le Web Audio API, on applique une compensation exacte de hauteur tonale (-12 * log2(playbackRate)).
       source.playbackRate.value = speechRate;
-      source.detune.value = pitchSemitones * 100; // 100 cents per semitone
+      const pitchCompensationSemitones = -12 * Math.log2(speechRate);
+      source.detune.value = (pitchSemitones + pitchCompensationSemitones) * 100;
 
       source.connect(ctx.destination);
       sourceNodeRef.current = source;
@@ -222,19 +235,26 @@ export default function ProsodyAndMobileDeploySection() {
     }
   };
 
-  const generatedKotlinSnippet = `// 1. Chargement du modèle VITS 22.05 kHz via PiperModelAssetConfig.kt :
+  const generatedKotlinSnippet = `// 1. Initialisation de Piper VITS (22.05 kHz) + Post-Processing Audio Normalizer (PiperModelAssetConfig.kt) :
 val ttsConfig = PiperVitsConfigBuilder.buildOfflineTtsConfig(
     extractedPaths = extractor.ensureVoiceProfileExtracted(VoiceModelProfile.${activeModel.id.toUpperCase().replace(/-/g, '_')}),
     espeakDataDirPath = "\${filesDir}/models/espeak-ng-data",
     profile = VoiceModelProfile.${activeModel.id.toUpperCase().replace(/-/g, '_')},
-    initialSpeechRate = ${speechRate.toFixed(2)}f // lengthScale = ${(1.0 / speechRate).toFixed(2)}f, noiseScale = ${noiseScale.toFixed(2)}f, noiseScaleW = ${noiseScaleW.toFixed(2)}f
+    targetWpm = ${targetWpm}, // ${targetWpm} mots/min (lengthScale = ${(155.0 / targetWpm).toFixed(2)}f, pitch F0 invariant)
+    expressiveness = 1.0f,
+    cpuThreads = 4
 )
 val offlineTts = OfflineTts(assetManager = null, config = ttsConfig)
 
-// 2. Scaling Temps Réel Vitesse (0.75x..1.50x) & Pitch (ProsodyRhythmEngine.kt -> SherpaOnnxTtsManager.kt) :
-ttsManager.setSpeechRate(${speechRate.toFixed(2)}f)        // Recalibre VITS + applique le ratio delta immédiat sur AudioTrack
-ttsManager.setPitchSemitones(${pitchSemitones.toFixed(1)}f) // PlaybackParams.setPitch(${pitchFactor.toFixed(3)}f)
-ttsManager.setPauseScale(${pauseScale.toFixed(2)}f)     // Virgule: ${commaPauseMs}ms · Deux-points: ${colonPauseMs}ms · Point: ${periodPauseMs}ms`;
+// 2. Couche de Normalisation Post-Traitement & Élagage des Artefacts de Ponctuation (ProsodyRhythmEngine.kt) :
+// Supprime le bruit "talkie-walkie" en fin de phrase (RMS + ZCR gate < 0.42f) et verrouille la voix entre paragraphes :
+val cleanWave = rhythmEngine.shapeWaveWithProsodicBreath(
+    rawSamples = generated.samples,
+    sampleRate = offlineTts.sampleRate(),
+    pauseDurationMs = ${periodPauseMs},
+    normalizerConfig = PiperAudioNormalizerConfig(targetPeak = 0.78f, maxUnvoicedZcr = 0.42f)
+)
+ttsManager.switchVoiceProfile(VoiceModelProfile.${activeModel.id.toUpperCase().replace(/-/g, '_')}) // Verrouille la voix pour tous les paragraphes`;
 
   const handleCopySnippet = async () => {
     try {
@@ -394,38 +414,38 @@ ttsManager.setPauseScale(${pauseScale.toFixed(2)}f)     // Virgule: ${commaPause
 
           {/* Sliders Grid */}
           <div className="space-y-4">
-            {/* 1. Speech Rate Slider */}
+            {/* 1. Speech Rate Slider (WPM driven) */}
             <div className="bg-[#0B0F17] border border-slate-800/90 rounded-xl p-4 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-white">
-                  1. Vitesse de lecture (Speech Rate Scaling)
+                  1. Débit de parole WPM (Prédicteur VITS · Pitch F0 invariant)
                 </span>
                 <span className="font-mono font-bold text-cyan-400 tabular-nums">
-                  {speechRate.toFixed(2)}x (lengthScale ={' '}
-                  {(1 / speechRate).toFixed(2)}f)
+                  {targetWpm} mots/min ({speechRate.toFixed(2)}x · lengthScale ={' '}
+                  {(155 / targetWpm).toFixed(2)}f)
                 </span>
               </div>
               <input
                 type="range"
-                min={0.75}
-                max={1.5}
-                step={0.05}
-                value={speechRate}
-                onChange={(e) => setSpeechRate( parseFloat(e.target.value) )}
+                min={110}
+                max={310}
+                step={5}
+                value={targetWpm}
+                onChange={(e) => setTargetWpm(parseInt(e.target.value, 10))}
                 className="w-full accent-cyan-400 cursor-pointer"
               />
               <div className="flex items-center justify-between gap-1.5 pt-1">
-                {[0.85, 1.0, 1.1, 1.25, 1.4].map((preset) => (
+                {[120, 155, 195, 230, 270].map((presetWpm) => (
                   <button
-                    key={preset}
-                    onClick={() => setSpeechRate(preset)}
+                    key={presetWpm}
+                    onClick={() => setTargetWpm(presetWpm)}
                     className={`flex-1 py-1 rounded-md text-[11px] font-mono tabular-nums border transition-colors ${
-                      Math.abs(speechRate - preset) < 0.03
+                      Math.abs(targetWpm - presetWpm) < 10
                         ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-bold'
                         : 'bg-[#111827] text-slate-300 border-slate-800 hover:border-slate-700'
                     }`}
                   >
-                    {preset.toFixed(2)}x
+                    {presetWpm} m/m
                   </button>
                 ))}
               </div>

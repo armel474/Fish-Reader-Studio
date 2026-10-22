@@ -29,6 +29,7 @@ import {
 
 interface NeuralVoicePreset {
   id: string;
+  voiceId: 'clara' | 'thomas' | 'nicolas' | 'emma';
   label: string;
   androidEquivalent: string;
   geminiVoiceName: 'Kore' | 'Zephyr' | 'Charon' | 'Puck';
@@ -38,30 +39,34 @@ interface NeuralVoicePreset {
 const NEURAL_VOICE_PRESETS: NeuralVoicePreset[] = [
   {
     id: 'piper-siwis-medium',
-    label: 'FR · Piper SIWIS Medium (Féminine Studio)',
+    voiceId: 'clara',
+    label: 'Voix 1/4 · Clara (FR · Piper SIWIS Medium · Féminine)',
     androidEquivalent: 'fr_FR-siwis-medium.onnx (22.05 kHz · 192 ch)',
     geminiVoiceName: 'Kore',
     sampleRateLabel: '22.05 kHz HD',
   },
   {
     id: 'piper-tom-medium',
-    label: 'FR · Piper Tom Medium (Masculine Grave)',
+    voiceId: 'thomas',
+    label: 'Voix 2/4 · Thomas (FR · Piper Tom Medium · Masculine Grave)',
     androidEquivalent: 'fr_FR-tom-medium.onnx (22.05 kHz · 192 ch)',
     geminiVoiceName: 'Charon',
     sampleRateLabel: '22.05 kHz HD',
   },
   {
-    id: 'piper-lessac-high',
-    label: 'EN · Piper Lessac High (Large VITS US)',
-    androidEquivalent: 'en_US-lessac-high.onnx (22.05 kHz · Large VITS)',
-    geminiVoiceName: 'Zephyr',
+    id: 'piper-cori-high',
+    voiceId: 'nicolas',
+    label: 'Voix 3/4 · Nicolas (FR · Piper UPMC Medium · Masculine Claire)',
+    androidEquivalent: 'fr_FR-upmc-medium.onnx (22.05 kHz · 192 ch)',
+    geminiVoiceName: 'Puck',
     sampleRateLabel: '22.05 kHz High',
   },
   {
-    id: 'piper-cori-high',
-    label: 'EN · Piper Cori High (Studio UK)',
-    androidEquivalent: 'en_GB-cori-high.onnx (22.05 kHz · Large VITS)',
-    geminiVoiceName: 'Puck',
+    id: 'piper-lessac-high',
+    voiceId: 'emma',
+    label: 'Voix 4/4 · Emma (EN · Piper Lessac High · Large VITS US)',
+    androidEquivalent: 'en_US-lessac-high.onnx (22.05 kHz · Large VITS)',
+    geminiVoiceName: 'Zephyr',
     sampleRateLabel: '22.05 kHz High',
   },
 ];
@@ -195,7 +200,7 @@ export default function AndroidOverlaySimulator() {
 
   const getCacheKey = useCallback(
     (appId: string, sentenceIdx: number, voiceName: string) =>
-      `${appId}::${sentenceIdx}::${voiceName}`,
+      `v4-locked::${appId}::${sentenceIdx}::${voiceName}`,
     []
   );
 
@@ -213,9 +218,6 @@ export default function AndroidOverlaySimulator() {
       activeSourceNodeRef.current.disconnect();
       activeSourceNodeRef.current = null;
     }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
     setIsSynthesizingNeural(false);
   }, []);
 
@@ -223,12 +225,13 @@ export default function AndroidOverlaySimulator() {
     async (
       app: SimulatedAndroidApp,
       sentenceIdx: number,
-      voiceName: string
+      voiceName: string,
+      voiceId?: string
     ): Promise<string | null> => {
       const sentenceObj = app.extractedSentences[sentenceIdx];
       if (!sentenceObj) return null;
 
-      const key = getCacheKey(app.id, sentenceIdx, voiceName);
+      const key = getCacheKey(app.id, sentenceIdx, voiceId || voiceName);
       const cached = audioCacheRef.current.get(key);
       if (cached) {
         setPrefetchedIndices((prev) =>
@@ -251,6 +254,7 @@ export default function AndroidOverlaySimulator() {
               text: sentenceObj.text,
               language: app.language,
               voiceName,
+              voiceId: voiceId || currentVoicePreset.voiceId,
             }),
           });
           if (!res.ok) return null;
@@ -273,7 +277,7 @@ export default function AndroidOverlaySimulator() {
       inFlightRequestsRef.current.set(key, requestPromise);
       return requestPromise;
     },
-    [getCacheKey]
+    [currentVoicePreset.voiceId, getCacheKey]
   );
 
   const playSentenceAtRef = useRef<(startIndex: number) => Promise<void>>(
@@ -303,20 +307,23 @@ export default function AndroidOverlaySimulator() {
       const liveSpeed = speechSpeedRef.current;
       const livePitch = pitchSemitonesRef.current;
 
-      // Lookahead Producer: prefetch next 2 sentences immediately in background
+      // Lookahead Producer: prefetch next 2 sentences immediately in background with locked voice
       const voiceName = currentVoicePreset.geminiVoiceName;
+      const lockedVoiceId = currentVoicePreset.voiceId;
       if (startIndex + 1 < currentApp.extractedSentences.length) {
         void fetchOrGetCachedSentenceAudio(
           currentApp,
           startIndex + 1,
-          voiceName
+          voiceName,
+          lockedVoiceId
         );
       }
       if (startIndex + 2 < currentApp.extractedSentences.length) {
         void fetchOrGetCachedSentenceAudio(
           currentApp,
           startIndex + 2,
-          voiceName
+          voiceName,
+          lockedVoiceId
         );
       }
 
@@ -341,7 +348,8 @@ export default function AndroidOverlaySimulator() {
       const audioDataUrl = await fetchOrGetCachedSentenceAudio(
         currentApp,
         startIndex,
-        voiceName
+        voiceName,
+        lockedVoiceId
       );
 
       if (activePlaybackTokenRef.current !== myToken) return;
@@ -361,7 +369,7 @@ export default function AndroidOverlaySimulator() {
             await ctx.resume();
           }
 
-          const cacheKey = getCacheKey(currentApp.id, startIndex, voiceName);
+          const cacheKey = getCacheKey(currentApp.id, startIndex, lockedVoiceId);
           let audioBuffer = decodedBufferCacheRef.current.get(cacheKey);
 
           if (!audioBuffer) {
@@ -410,27 +418,16 @@ export default function AndroidOverlaySimulator() {
         }
       }
 
-      // Fallback Web Speech API
-      setTtsEngineStatus('Fallback synthèse locale du navigateur');
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(sentenceObj.text);
-        utterance.lang = currentApp.language === 'fr' ? 'fr-FR' : 'en-US';
-        utterance.rate = speechSpeedRef.current;
-        utterance.pitch = Math.max(
-          0.5,
-          Math.min(1.5, 1.0 + pitchSemitonesRef.current * 0.08)
-        );
-        utterance.onend = () => {
-          if (activePlaybackTokenRef.current !== myToken) return;
-          const nextIdx = startIndex + 1;
-          if (nextIdx < currentApp.extractedSentences.length) {
-            void playSentenceAtRef.current(nextIdx);
-          } else {
-            setIsPlaying(false);
-          }
-        };
-        window.speechSynthesis.speak(utterance);
-      }
+      // Advance cleanly if offline without switching to browser speechSynthesis
+      pauseTimeoutRef.current = window.setTimeout(() => {
+        if (activePlaybackTokenRef.current !== myToken) return;
+        const nextIdx = startIndex + 1;
+        if (nextIdx < currentApp.extractedSentences.length) {
+          void playSentenceAtRef.current(nextIdx);
+        } else {
+          setIsPlaying(false);
+        }
+      }, (sentenceObj.durationSec * 1000) / speechSpeedRef.current);
     },
     [
       currentApp,
@@ -468,11 +465,17 @@ export default function AndroidOverlaySimulator() {
     return () => stopAllAudio();
   }, [stopAllAudio]);
 
+  const [overlayUiState, setOverlayUiState] = useState<
+    'IDLE_CIRCLE' | 'SCANNING' | 'SELECT_PARAGRAPH' | 'VERTICAL_PILL' | 'CONFIG_PANEL'
+  >('IDLE_CIRCLE');
+
   const handleSelectApp = (appId: string) => {
     stopAllAudio();
     setPhoneScreenMode('OVERLAY_ON_APPS');
     setSelectedAppId(appId);
     setIsPlaying(false);
+    setIsExpanded(false);
+    setOverlayUiState('IDLE_CIRCLE');
     setCurrentSentenceIdx(0);
     setElapsedSeconds(0);
     const nextApp = SIMULATED_ANDROID_APPS.find((a) => a.id === appId);
@@ -484,22 +487,51 @@ export default function AndroidOverlaySimulator() {
   };
 
   const handleBubbleClick = () => {
-    setIsExpanded(true);
-    if (!isPlaying) {
-      void playSentenceAt(currentSentenceIdx);
+    if (isPlaying || overlayUiState === 'VERTICAL_PILL') {
+      setIsExpanded(false);
+      setOverlayUiState('VERTICAL_PILL');
+      return;
     }
+    setIsExpanded(false);
+    setOverlayUiState('SCANNING');
+    window.setTimeout(() => {
+      setOverlayUiState('SELECT_PARAGRAPH');
+    }, 450);
+  };
+
+  const handleStartFromNode = (nodeId: string) => {
+    const sentIdx = currentApp.extractedSentences.findIndex(
+      (s) => s.nodeId === nodeId
+    );
+    const targetIdx = sentIdx >= 0 ? sentIdx : 0;
+    setSelectedNodeId(nodeId);
+    setIsExpanded(false);
+    setOverlayUiState('VERTICAL_PILL');
+    void playSentenceAt(targetIdx);
+  };
+
+  const handleStopAndResetToIdleCircle = () => {
+    stopAllAudio();
+    setIsPlaying(false);
+    setIsExpanded(false);
+    setCurrentSentenceIdx(0);
+    setOverlayUiState('IDLE_CIRCLE');
+    setTtsEngineStatus('Arrêté · Retour au petit rond discret');
   };
 
   const handleTogglePlayPause = () => {
     if (isPlaying) {
       stopAllAudio();
       setIsPlaying(false);
-      setTtsEngineStatus('En pause (tampon AudioTrack maintenu)');
+      setTtsEngineStatus('En pause (reprise exacte au toucher sur ◉)');
     } else {
       const restartIdx =
         currentSentenceIdx >= currentApp.extractedSentences.length
           ? 0
           : currentSentenceIdx;
+      if (overlayUiState === 'IDLE_CIRCLE' || overlayUiState === 'SELECT_PARAGRAPH') {
+        setOverlayUiState('VERTICAL_PILL');
+      }
       void playSentenceAt(restartIdx);
     }
   };

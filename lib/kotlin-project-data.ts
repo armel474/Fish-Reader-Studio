@@ -510,13 +510,20 @@ enum class VoiceModelProfile(
  */
 object PiperVitsConfigBuilder {
 
+
     /**
      * Construit un [OfflineTtsConfig] prêt à être injecté dans [OfflineTts].
+     *
+     * GESTION DE LA VITESSE VIA LE DÉBIT WPM (WORDS PER MINUTE) DANS PIPER TTS :
+     * Dans Piper VITS, la durée des phonèmes est calculée par le Stochastic Duration Predictor (SDP).
+     * Le paramètre [lengthScale] raccourcit ou étire la durée phonémique intrinsèque du réseau de neurones,
+     * SANS décaler la fréquence fondamentale F0 ni modifier la hauteur tonale (zéro pitch-shifting).
      *
      * @param extractedPaths Chemins absolus vers le fichier .onnx et tokens.txt dans filesDir
      * @param espeakDataDirPath Chemin absolu vers filesDir/models/espeak-ng-data
      * @param profile Profil du modèle VITS Medium/High sélectionné
-     * @param initialSpeechRate Vitesse initiale de lecture (0.75f à 1.50f, défaut = 1.0f)
+     * @param targetWpm Débit cible en mots par minute (110 à 310 WPM, référence naturelle = 155 WPM)
+     * @param initialSpeechRate Multiplicateur de vitesse alternatif (ex. 1.0f = 155 WPM, 1.25f = 194 WPM)
      * @param expressiveness Facteur d'expressivité modulant noiseScaleW (0.5f à 1.4f, défaut = 1.0f)
      * @param cpuThreads Nombre de threads CPU ARM64 alloués à ONNX Runtime (4 recommandé sur big.LITTLE)
      */
@@ -524,13 +531,23 @@ object PiperVitsConfigBuilder {
         extractedPaths: ExtractedVoicePaths,
         espeakDataDirPath: String,
         profile: VoiceModelProfile,
+        targetWpm: Int = 155,
         initialSpeechRate: Float = 1.0f,
         expressiveness: Float = 1.0f,
         cpuThreads: Int = 4
     ): OfflineTtsConfig {
-        val clampedRate = initialSpeechRate.coerceIn(0.75f, 1.50f)
-        val effectiveLengthScale = (profile.recommendedLengthScale / clampedRate)
-            .coerceIn(0.55f, 1.45f)
+        // Détermination du ratio de vitesse effectif basé prioritairement sur targetWpm (ou initialSpeechRate)
+        val effectiveRate = if (targetWpm != 155) {
+            (targetWpm.toFloat() / 155f).coerceIn(0.70f, 2.05f)
+        } else {
+            initialSpeechRate.coerceIn(0.70f, 2.05f)
+        }
+
+        // Dans Piper VITS, lengthScale est inversement proportionnel au débit WPM :
+        // Un débit élevé (ex. 230 WPM -> rate = 1.48x) réduit lengthScale vers 0.65x,
+        // ce qui raccourcit les voyelles et syllabes sans aucun effet aigu (pitch constant).
+        val effectiveLengthScale = (profile.recommendedLengthScale / effectiveRate)
+            .coerceIn(0.48f, 1.55f)
 
         val tunedNoiseScale = profile.recommendedNoiseScale
         val tunedNoiseScaleW = (profile.recommendedNoiseScaleW * expressiveness)
@@ -555,7 +572,34 @@ object PiperVitsConfigBuilder {
 
         return OfflineTtsConfig(model = modelConfig)
     }
+
+    /**
+     * Calcule le paramètre 'speed' dynamique passé à [OfflineTts.generate] en fonction du débit WPM cible.
+     * Référence standard : 155 WPM = 1.00x.
+     */
+    fun computePiperSpeedForWpm(targetWpm: Int): Float =
+        (targetWpm.toFloat() / 155f).coerceIn(0.70f, 2.05f)
+
+    /**
+     * Calcule la valeur [lengthScale] correspondante pour les configurations VITS personnalisées.
+     */
+    fun computeLengthScaleForWpm(targetWpm: Int, baseLengthScale: Float = 1.0f): Float =
+        (baseLengthScale / (targetWpm.toFloat() / 155f)).coerceIn(0.48f, 1.55f)
 }
+
+/**
+ * Configuration de la couche de normalisation post-traitement Piper TTS.
+ * Élimine les bruits parasites ("effet talkie-walkie", souffle glottal ou clic ONNX)
+ * aux signes de ponctuation (.,;:?!) et normalise l'amplitude crête entre les paragraphes.
+ */
+data class PiperAudioNormalizerConfig(
+    val targetPeak: Float = 0.78f,
+    val maxGainBoost: Float = 2.6f,
+    val rmsGateFloor: Float = 0.0085f,
+    val maxUnvoicedZcr: Float = 0.42f,
+    val attackFadeMs: Float = 12f,
+    val releaseFadeMs: Float = 28f
+)
 
 /**
  * EXEMPLE COMPLET D'INITIALISATION ET DE SYNTHÈSE HAUTE FIDÉLITÉ (22.05 kHz) :
@@ -580,6 +624,7 @@ object PiperHighFidelityLoaderExample {
             extractedPaths = voicePaths,
             espeakDataDirPath = espeakDir.absolutePath,
             profile = VoiceModelProfile.FR_SIWIS_MEDIUM,
+            targetWpm = (userSpeechRate * 155).toInt(),
             initialSpeechRate = userSpeechRate,
             expressiveness = 1.0f,
             cpuThreads = 4
@@ -688,23 +733,32 @@ import kotlin.math.min
 import kotlin.math.pow
 
 /**
- * Paramètres prosodiques temps réel exposés par [ProsodyRhythmEngine] à [SherpaOnnxTtsManager],
- * à l'écran mobile [MainActivity] et à la bulle flottante [FishOverlayService].
+ * Paramètres prosodiques temps réel régis par le débit en mots par minute (WPM).
+ * Dans Piper TTS / Sherpa-ONNX, le débit pilote la durée phonémique (length_scale)
+ * dans le modèle de durée stochastique (SDP), garantissant que le pitch (hauteur F0)
+ * reste strictement naturel et invariant (aucun effet chipmunk ni pitch-shift parasite).
  *
- * @param speechRate Vitesse de lecture globale réglable en temps réel entre [MIN_SPEECH_RATE] (0.75x) et [MAX_SPEECH_RATE] (1.50x)
- * @param pitchSemitones Décalage de hauteur tonale en demi-tons entre [MIN_PITCH_SEMITONES] (-4.0) et [MAX_PITCH_SEMITONES] (+4.0)
+ * @param targetWpm Débit de parole cible en mots par minute (110 à 310 WPM, référence naturelle = 155 WPM)
+ * @param speechRate Multiplicateur relatif calculé (targetWpm / 155.0f, ex. 155 WPM -> 1.00x, 230 WPM -> 1.48x)
+ * @param pitchSemitones Décalage de hauteur tonale en demi-tons (0.0 st = hauteur naturelle préservée)
  * @param pauseScale Multiplicateur des pauses de ponctuation (0.60f = serré, 1.0f = naturel, 1.50f = posé)
  * @param expressiveness Modulation de l'inflexion prosodique (0.50f à 1.40f)
  */
 data class ProsodyParameters(
-    val speechRate: Float = DEFAULT_SPEECH_RATE,
+    val targetWpm: Int = DEFAULT_TARGET_WPM,
+    val speechRate: Float = (DEFAULT_TARGET_WPM.toFloat() / BASE_CONVERSATIONAL_WPM.toFloat()),
     val pitchSemitones: Float = DEFAULT_PITCH_SEMITONES,
     val pauseScale: Float = DEFAULT_PAUSE_SCALE,
     val expressiveness: Float = DEFAULT_EXPRESSIVENESS
 ) {
     companion object {
-        const val MIN_SPEECH_RATE = 0.75f
-        const val MAX_SPEECH_RATE = 1.50f
+        const val BASE_CONVERSATIONAL_WPM = 155
+        const val MIN_TARGET_WPM = 110
+        const val MAX_TARGET_WPM = 310
+        const val DEFAULT_TARGET_WPM = 155
+
+        const val MIN_SPEECH_RATE = 0.70f
+        const val MAX_SPEECH_RATE = 2.05f
         const val DEFAULT_SPEECH_RATE = 1.0f
 
         const val MIN_PITCH_SEMITONES = -4.0f
@@ -717,21 +771,29 @@ data class ProsodyParameters(
 
         const val DEFAULT_EXPRESSIVENESS = 1.0f
 
-        val QUICK_SPEED_PRESETS = listOf(0.75f, 0.85f, 1.0f, 1.15f, 1.25f, 1.50f)
+        // Paliers WPM ergonomiques avec rythmes humains naturels
+        val QUICK_WPM_PRESETS = listOf(120, 155, 195, 230, 270)
+        val QUICK_SPEED_PRESETS = listOf(0.77f, 1.0f, 1.25f, 1.48f, 1.74f)
     }
 
     /**
-     * Facteur fréquentiel calculé selon l'échelle tempérée : 2^(demi-tons / 12).
-     * Exemple : -1.0 demi-ton -> 0.9438f ; +2.0 demi-tons -> 1.1224f.
+     * Compression organique des pauses respiratoires : plus le locuteur parle vite,
+     * plus les silences entre propositions se resserrent selon une loi acoustique (loi de puissance 0.85).
      */
-    val pitchMultiplier: Float
-        get() = semitonesToFrequencyRatio(pitchSemitones)
+    val wpmPauseFactor: Float
+        get() = (BASE_CONVERSATIONAL_WPM.toFloat() / targetWpm.coerceIn(MIN_TARGET_WPM, MAX_TARGET_WPM).toFloat())
+            .pow(0.85f)
 
     /**
-     * Inverse du débit destiné au paramètre lengthScale du modèle VITS (1.0f / speechRate).
+     * Inverse du débit destiné au paramètre lengthScale de Piper VITS.
+     * Un débit de 230 WPM diminue lengthScale vers 0.67x, accélérant la phonation
+     * tout en maintenant la hauteur fondamentale F0 à 100 % naturelle.
      */
     val vitsLengthScaleRatio: Float
-        get() = (1.0f / speechRate.coerceIn(MIN_SPEECH_RATE, MAX_SPEECH_RATE))
+        get() = (BASE_CONVERSATIONAL_WPM.toFloat() / targetWpm.coerceIn(MIN_TARGET_WPM, MAX_TARGET_WPM).toFloat())
+
+    val pitchMultiplier: Float
+        get() = semitonesToFrequencyRatio(pitchSemitones)
 
     fun semitonesToFrequencyRatio(semitones: Float): Float =
         2.0.pow(semitones.toDouble() / 12.0).toFloat().coerceIn(0.75f, 1.35f)
@@ -801,19 +863,35 @@ class ProsodyRhythmEngine {
     private val clauseSplitRegex = Regex("(?<=[,;:.?!—])\\\\s+")
 
     /**
-     * Règle la vitesse de lecture en temps réel dans la plage [0.75x .. 1.50x].
+     * Règle le débit de parole en mots par minute (110 à 310 WPM).
+     * Modifie directement lengthScale dans Piper VITS et synchronise speechRate sans toucher au pitch.
      */
-    fun setSpeechRate(rate: Float): ProsodyParameters {
-        val clamped = rate.coerceIn(
-            ProsodyParameters.MIN_SPEECH_RATE,
-            ProsodyParameters.MAX_SPEECH_RATE
-        )
-        _prosodyState.update { it.copy(speechRate = clamped) }
+    fun setTargetWpm(wpm: Int): ProsodyParameters {
+        val clampedWpm = wpm.coerceIn(ProsodyParameters.MIN_TARGET_WPM, ProsodyParameters.MAX_TARGET_WPM)
+        val rate = clampedWpm.toFloat() / ProsodyParameters.BASE_CONVERSATIONAL_WPM.toFloat()
+        _prosodyState.update { it.copy(targetWpm = clampedWpm, speechRate = rate) }
         return _prosodyState.value
     }
 
     /**
-     * Incrémente ou décrémente la vitesse de lecture (ex. +0.10f ou -0.10f depuis la bulle flottante).
+     * Règle la vitesse de lecture relative (ex. 1.25f) et synchronise le débit WPM correspondant.
+     */
+    fun setSpeechRate(rate: Float): ProsodyParameters {
+        val clampedRate = rate.coerceIn(
+            ProsodyParameters.MIN_SPEECH_RATE,
+            ProsodyParameters.MAX_SPEECH_RATE
+        )
+        val computedWpm = (clampedRate * ProsodyParameters.BASE_CONVERSATIONAL_WPM).roundToInt()
+            .coerceIn(ProsodyParameters.MIN_TARGET_WPM, ProsodyParameters.MAX_TARGET_WPM)
+        _prosodyState.update { it.copy(speechRate = clampedRate, targetWpm = computedWpm) }
+        return _prosodyState.value
+    }
+
+    fun stepTargetWpm(deltaWpm: Int): ProsodyParameters =
+        setTargetWpm(_prosodyState.value.targetWpm + deltaWpm)
+
+    /**
+     * Incrémente ou décrémente la vitesse de lecture.
      */
     fun stepSpeechRate(delta: Float): ProsodyParameters =
         setSpeechRate(_prosodyState.value.speechRate + delta)
@@ -846,16 +924,19 @@ class ProsodyRhythmEngine {
      * Met à jour simultanément l'ensemble des paramètres prosodiques.
      */
     fun updateParameters(
-        speechRate: Float = _prosodyState.value.speechRate,
+        targetWpm: Int = _prosodyState.value.targetWpm,
+        speechRate: Float = (targetWpm.toFloat() / ProsodyParameters.BASE_CONVERSATIONAL_WPM.toFloat()),
         pitchSemitones: Float = _prosodyState.value.pitchSemitones,
         pauseScale: Float = _prosodyState.value.pauseScale,
         expressiveness: Float = _prosodyState.value.expressiveness
     ): ProsodyParameters {
+        val clampedWpm = targetWpm.coerceIn(ProsodyParameters.MIN_TARGET_WPM, ProsodyParameters.MAX_TARGET_WPM)
+        val clampedRate = (clampedWpm.toFloat() / ProsodyParameters.BASE_CONVERSATIONAL_WPM.toFloat())
+            .coerceIn(ProsodyParameters.MIN_SPEECH_RATE, ProsodyParameters.MAX_SPEECH_RATE)
+
         val updated = ProsodyParameters(
-            speechRate = speechRate.coerceIn(
-                ProsodyParameters.MIN_SPEECH_RATE,
-                ProsodyParameters.MAX_SPEECH_RATE
-            ),
+            targetWpm = clampedWpm,
+            speechRate = clampedRate,
             pitchSemitones = pitchSemitones.coerceIn(
                 ProsodyParameters.MIN_PITCH_SEMITONES,
                 ProsodyParameters.MAX_PITCH_SEMITONES
@@ -871,34 +952,22 @@ class ProsodyRhythmEngine {
     }
 
     /**
-     * Construit les paramètres matériels [PlaybackParams] d'Android [ android.media.AudioTrack ]
-     * pour appliquer instantanément un changement de vitesse (0.75x..1.50x) ou de pitch (-4..+4 st)
-     * sur le segment audio en cours de lecture.
-     *
-     * @param chunkSynthesizedUserRate Vitesse utilisateur qui était active au moment où le segment PCM a été généré par VITS
-     * @param clausePitchDeltaSemitones Micro-inflexion prosodique propre à la ponctuation de la clause courante
+     * Construit les paramètres matériels [PlaybackParams] d'Android [android.media.AudioTrack].
+     * CRITIQUE : [setPitch] est fixé à 1.0f (ou modulé uniquement sur demande explicite),
+     * garantissant que l'accélération du débit WPM n'induit AUCUN décalage de hauteur (pas d'effet chipmunk).
      */
     fun buildRealtimePlaybackParams(
         chunkSynthesizedUserRate: Float = _prosodyState.value.speechRate,
         clausePitchDeltaSemitones: Float = 0.0f
     ): PlaybackParams {
         val current = _prosodyState.value
-
-        // Si le segment a déjà été synthétisé par VITS à 1.25x et que l'utilisateur est toujours à 1.25x,
-        // deltaSpeedRatio vaut 1.0f. Si l'utilisateur glisse le curseur à 1.50x pendant la phrase,
-        // AudioTrack accélère immédiatement de (1.50 / 1.25 = 1.20x) jusqu'au segment suivant.
         val safeBaseRate = chunkSynthesizedUserRate.coerceAtLeast(0.5f)
-        val deltaSpeedRatio = (current.speechRate / safeBaseRate).coerceIn(0.65f, 1.65f)
-
-        val totalSemitones = current.pitchSemitones + (clausePitchDeltaSemitones * current.expressiveness)
-        val targetPitchFactor = 2.0.pow(totalSemitones.toDouble() / 12.0)
-            .toFloat()
-            .coerceIn(0.75f, 1.35f)
+        val deltaSpeedRatio = (current.speechRate / safeBaseRate).coerceIn(0.65f, 1.75f)
 
         return PlaybackParams()
             .allowDefaults()
             .setSpeed(deltaSpeedRatio)
-            .setPitch(targetPitchFactor)
+            .setPitch(1.0f) // Préserve strictement la hauteur vocale naturelle à tout débit WPM
             .setAudioFallbackMode(PlaybackParams.AUDIO_FALLBACK_MODE_DEFAULT)
     }
 
@@ -948,14 +1017,14 @@ class ProsodyRhythmEngine {
             val isLastClause = idx == balancedParts.lastIndex
             val rhythmType = classifyRhythmType(clauseText, isLastClause && isEndOfParagraph)
 
-            // Scaling inverse des pauses : plus la lecture est rapide, plus les respirations se raccourcissent naturellement
-            val scaledPauseMs = (rhythmType.basePauseMs * params.pauseScale / clampedUserRate.coerceAtLeast(0.80f))
+            // Scaling acoustique organique des pauses proportionnel au débit WPM (loi de puissance 0.85)
+            val scaledPauseMs = (rhythmType.basePauseMs * params.pauseScale * params.wpmPauseFactor)
                 .toInt()
-                .coerceIn(70, 850)
+                .coerceIn(55, 800)
 
-            // Vitesse envoyée à OfflineTts.generate(text, sid, speed)
+            // Vitesse phonémique VITS envoyée à OfflineTts.generate(text, sid, speed)
             val effectiveSpeed = (clampedUserRate * rhythmType.relativeSpeedFactor)
-                .coerceIn(0.65f, 1.65f)
+                .coerceIn(0.65f, 2.05f)
 
             val clauseDeltaSt = rhythmType.relativePitchDeltaSemitones
             val totalSemitones = params.pitchSemitones + (clauseDeltaSt * params.expressiveness)
@@ -987,28 +1056,102 @@ class ProsodyRhythmEngine {
     }
 
     /**
-     * Supprime le silence résiduel en fin d'inférence ONNX, applique une enveloppe cosinus douce
-     * (attaque 12 ms / relâchement 24 ms) et ajoute le silence de respiration calibré.
+     * Couche de Normalisation Audio Post-Traitement Piper TTS :
+     * 1. Supprime la composante continue (DC offset) du tampon brut VITS.
+     * 2. Élague les artefacts de ponctuation et bruits parasites de fin de phrase ("effet talkie-walkie")
+     *    via une porte spectrale combinant l'énergie RMS (10 ms) et le taux de passage par zéro (ZCR < 0.42).
+     * 3. Normalise l'amplitude crête (targetPeak = 0.78f) pour une régularité constante entre paragraphes.
+     * 4. Applique une enveloppe cosinus douce (attaque 12 ms / relâchement 28 ms) et insère un silence numérique pur (0.0f).
      */
     fun shapeWaveWithProsodicBreath(
         rawSamples: FloatArray,
         sampleRate: Int,
-        pauseDurationMs: Int
+        pauseDurationMs: Int,
+        normalizerConfig: PiperAudioNormalizerConfig = PiperAudioNormalizerConfig()
     ): FloatArray {
         if (rawSamples.isEmpty()) return rawSamples
 
-        var trimmedEnd = rawSamples.size
-        val silenceThreshold = 0.0035f
-        while (trimmedEnd > sampleRate / 20 && kotlin.math.abs(rawSamples[trimmedEnd - 1]) < silenceThreshold) {
-            trimmedEnd--
+        // 1. Suppression du DC Offset
+        var dcSum = 0.0
+        for (s in rawSamples) dcSum += s
+        val dcMean = (dcSum / rawSamples.size).toFloat()
+        val centered = FloatArray(rawSamples.size) { i ->
+            (rawSamples[i] - dcMean).coerceIn(-1.0f, 1.0f)
         }
 
-        val attackSamples = min(trimmedEnd / 4, (sampleRate * 0.012f).toInt())
-        val releaseSamples = min(trimmedEnd / 3, (sampleRate * 0.024f).toInt())
+        // 2. Fenêtrage de 10 ms : calcul RMS + Zero-Crossing Rate (ZCR) pour élaguer le bruit "talkie-walkie" en fin de phrase
+        val winSize = (sampleRate * 0.010f).toInt().coerceAtLeast(64)
+        val numWins = centered.size / winSize
+        if (numWins < 2) return centered
+
+        val winRms = FloatArray(numWins)
+        val winZcr = FloatArray(numWins)
+        var maxRms = 0f
+
+        for (w in 0 until numWins) {
+            var sumSq = 0.0
+            var zeroCrossings = 0
+            val baseIdx = w * winSize
+            var prev = centered[baseIdx]
+            for (i in 0 until winSize) {
+                val v = centered[baseIdx + i]
+                sumSq += v * v
+                if ((v >= 0f && prev < 0f) || (v < 0f && prev >= 0f)) {
+                    zeroCrossings++
+                }
+                prev = v
+            }
+            val rms = kotlin.math.sqrt(sumSq / winSize).toFloat()
+            winRms[w] = rms
+            winZcr[w] = zeroCrossings.toFloat() / winSize.toFloat()
+            if (rms > maxRms) maxRms = rms
+        }
+
+        val dynamicRmsFloor = kotlin.math.max(normalizerConfig.rmsGateFloor, maxRms * 0.065f)
+
+        // Détection du début de parole voisée
+        var firstVoicedWin = 0
+        while (firstVoicedWin < numWins - 1 && winRms[firstVoicedWin] < dynamicRmsFloor * 0.75f) {
+            firstVoicedWin++
+        }
+        val trimStart = kotlin.math.max(0, (firstVoicedWin - 1) * winSize)
+
+        // Détection de la fin de parole réelle (élague le souffle non-voisé à fort ZCR généré sur les points finaux)
+        var lastVoicedWin = numWins - 1
+        while (lastVoicedWin > firstVoicedWin) {
+            val rms = winRms[lastVoicedWin]
+            val zcr = winZcr[lastVoicedWin]
+            val isRealVoicedSpeech =
+                (rms >= dynamicRmsFloor && zcr < normalizerConfig.maxUnvoicedZcr) ||
+                (rms >= dynamicRmsFloor * 2.1f)
+            if (isRealVoicedSpeech) break
+            lastVoicedWin--
+        }
+        val tailGuardSamples = (sampleRate * 0.014f).toInt()
+        val trimEnd = min(centered.size, (lastVoicedWin + 1) * winSize + tailGuardSamples)
+        val activeLen = (trimEnd - trimStart).coerceAtLeast(sampleRate / 25)
+
+        // 3. Normalisation d'amplitude crête pour une constance vocale parfaite d'un paragraphe à l'autre
+        var peak = 0.0001f
+        for (i in trimStart until (trimStart + activeLen).coerceAtMost(centered.size)) {
+            val a = kotlin.math.abs(centered[i])
+            if (a > peak) peak = a
+        }
+        val normGain = if (peak > 0.01f) {
+            (normalizerConfig.targetPeak / peak).coerceIn(0.45f, normalizerConfig.maxGainBoost)
+        } else {
+            1.0f
+        }
+
+        val attackSamples = min(activeLen / 4, (sampleRate * (normalizerConfig.attackFadeMs / 1000f)).toInt())
+        val releaseSamples = min(activeLen / 3, (sampleRate * (normalizerConfig.releaseFadeMs / 1000f)).toInt())
         val breathSilenceSamples = (sampleRate * (pauseDurationMs / 1000f)).toInt()
 
-        val output = FloatArray(trimmedEnd + breathSilenceSamples)
-        System.arraycopy(rawSamples, 0, output, 0, trimmedEnd)
+        val output = FloatArray(activeLen + breathSilenceSamples)
+        for (i in 0 until activeLen) {
+            val srcIdx = (trimStart + i).coerceAtMost(centered.size - 1)
+            output[i] = (centered[srcIdx] * normGain).coerceIn(-0.98f, 0.98f)
+        }
 
         for (i in 0 until attackSamples) {
             val phase = i.toDouble() / attackSamples.toDouble()
@@ -1019,7 +1162,7 @@ class ProsodyRhythmEngine {
         for (i in 0 until releaseSamples) {
             val phase = i.toDouble() / releaseSamples.toDouble()
             val gain = (0.5 * (1.0 - cos(PI * phase))).toFloat()
-            output[trimmedEnd - 1 - i] *= gain
+            output[activeLen - 1 - i] *= gain
         }
 
         return output
@@ -1163,6 +1306,7 @@ class SherpaOnnxTtsManager(
             extractedPaths = paths,
             espeakDataDirPath = espeakDataPath,
             profile = profile,
+            targetWpm = currentProsody.targetWpm,
             initialSpeechRate = currentProsody.speechRate,
             expressiveness = currentProsody.expressiveness,
             cpuThreads = 4
@@ -1174,10 +1318,23 @@ class SherpaOnnxTtsManager(
     }
 
     /**
-     * Modifie en temps réel la vitesse de lecture entre 0.75x et 1.50x sans bloquer le thread UI :
-     * 1. Met à jour l'état StateFlow en mémoire (< 0.1 ms sur Main.immediate).
-     * 2. Émet un signal non-bloquant (tryEmit + DROP_OLDEST) vers [audioControlDispatcher]
-     *    pour appliquer le ratio sur AudioTrack en arrière-plan.
+     * Règle le débit en mots par minute (110 à 310 WPM).
+     * Modifie directement lengthScale dans Piper VITS sans induire de décalage de pitch.
+     */
+    fun setTargetWpm(wpm: Int) {
+        val updated = rhythmEngine.setTargetWpm(wpm)
+        _playbackState.value = _playbackState.value.copy(prosody = updated)
+        hardwareSyncRequests.tryEmit(Unit)
+    }
+
+    fun stepTargetWpm(deltaWpm: Int) {
+        val updated = rhythmEngine.stepTargetWpm(deltaWpm)
+        _playbackState.value = _playbackState.value.copy(prosody = updated)
+        hardwareSyncRequests.tryEmit(Unit)
+    }
+
+    /**
+     * Modifie en temps réel la vitesse de lecture relative (targetWpm / 155.0f).
      */
     fun setSpeechRate(speechRate: Float) {
         val updated = rhythmEngine.setSpeechRate(speechRate)
@@ -1186,7 +1343,7 @@ class SherpaOnnxTtsManager(
     }
 
     /**
-     * Incrémente ou décrémente la vitesse de lecture (ex. +0.10f ou -0.10f) sans blocage UI.
+     * Incrémente ou décrémente la vitesse de lecture.
      */
     fun stepSpeechRate(delta: Float) {
         val updated = rhythmEngine.stepSpeechRate(delta)
@@ -1212,16 +1369,19 @@ class SherpaOnnxTtsManager(
     }
 
     /**
-     * Met à jour conjointement la vitesse (0.75x à 1.50x), le pitch (-4 à +4 demi-tons),
-     * l'amplitude des pauses et l'expressivité de manière 100 % non-bloquante pour l'UI.
+     * Met à jour conjointement le débit WPM (110 à 310 mots/min), la vitesse relative,
+     * le pitch (-4 à +4 demi-tons, défaut 0.0), l'amplitude des pauses et l'expressivité
+     * de manière 100 % non-bloquante pour l'UI, garantissant une F0 invariante.
      */
     fun updateProsodyParameters(
-        speechRate: Float = rhythmEngine.prosodyState.value.speechRate,
+        targetWpm: Int = rhythmEngine.prosodyState.value.targetWpm,
+        speechRate: Float = (targetWpm.toFloat() / 155f),
         pitchSemitones: Float = rhythmEngine.prosodyState.value.pitchSemitones,
         pauseScale: Float = rhythmEngine.prosodyState.value.pauseScale,
         expressiveness: Float = rhythmEngine.prosodyState.value.expressiveness
     ) {
         val updated = rhythmEngine.updateParameters(
+            targetWpm = targetWpm,
             speechRate = speechRate,
             pitchSemitones = pitchSemitones,
             pauseScale = pauseScale,
@@ -1242,22 +1402,24 @@ class SherpaOnnxTtsManager(
         }
     }
 
+    /**
+     * Lance la lecture d'une liste de phrases ou paragraphes en maintenant STRICTEMENT
+     * la voix sélectionnée par l'utilisateur ([activeProfile]).
+     * La voix ne change jamais automatiquement entre deux paragraphes ou deux lectures :
+     * seul un appel explicite à [switchVoiceProfile] modifie la voix active.
+     */
     fun speakSentences(sentences: List<String>, languageCode: String) {
         if (sentences.isEmpty()) return
         stopAudioTrack()
 
-        val currentProfile = _playbackState.value.activeProfile
-        val targetProfile = if (currentProfile.languageCode == languageCode) {
-            currentProfile
-        } else {
-            VoiceModelProfile.defaultForLanguage(languageCode)
-        }
+        // Verrouillage strict de la voix choisie par l'utilisateur pour garantir une régularité constante
+        val lockedProfile = _playbackState.value.activeProfile
 
         _playbackState.value = _playbackState.value.copy(
             isReady = true,
             isPlaying = true,
-            activeProfile = targetProfile,
-            languageCode = languageCode,
+            activeProfile = lockedProfile,
+            languageCode = lockedProfile.languageCode,
             sentences = sentences,
             currentSentenceIndex = 0,
             currentSentenceText = sentences.first()
@@ -1614,8 +1776,9 @@ class OverlayInteractionController(
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
 
-    val speedPresets: List<SpeedPresetUiModel> = ProsodyParameters.QUICK_SPEED_PRESETS.map { rate ->
-        SpeedPresetUiModel(rate = rate, label = "\${rate}x")
+    val speedPresets: List<SpeedPresetUiModel> = ProsodyParameters.QUICK_WPM_PRESETS.map { wpm ->
+        val rate = wpm.toFloat() / ProsodyParameters.BASE_CONVERSATIONAL_WPM.toFloat()
+        SpeedPresetUiModel(rate = rate, label = "\${wpm} m/m")
     }
 
     init {
@@ -2683,9 +2846,10 @@ class MainActivity : ComponentActivity() {
                         MobileTab.VOICE_PROSODY -> VoiceAndSpeedSettingsScreen(
                             ttsState = ttsState,
                             onSelectProfile = { ttsManager.switchVoiceProfile(it) },
-                            onUpdateProsody = { rate, pitch, pause ->
+                            onUpdateWpm = { wpm -> ttsManager.setTargetWpm(wpm) },
+                            onUpdateProsody = { wpm, pitch, pause ->
                                 ttsManager.updateProsodyParameters(
-                                    speechRate = rate,
+                                    targetWpm = wpm,
                                     pitchSemitones = pitch,
                                     pauseScale = pause
                                 )
@@ -2765,11 +2929,12 @@ private fun HomePermissionsScreen(
 private fun VoiceAndSpeedSettingsScreen(
     ttsState: TtsPlaybackState,
     onSelectProfile: (VoiceModelProfile) -> Unit,
-    onUpdateProsody: (Float, Float, Float) -> Unit
+    onUpdateWpm: (Int) -> Unit,
+    onUpdateProsody: (Int, Float, Float) -> Unit
 ) {
     val prosody = ttsState.prosody
 
-    // 1. Carte Vitesse de Lecture (Speech Rate Scaling : 0.75x à 1.50x)
+    // 1. Carte Débit de Parole WPM (Contrôle phonémique VITS : 110 à 310 mots/min sans pitch-shift)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2779,45 +2944,70 @@ private fun VoiceAndSpeedSettingsScreen(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Vitesse de lecture", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-            Text(
-                text = String.format("%.2fx", prosody.speechRate),
-                color = Color(0xFF38BDF8),
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            )
+            Column {
+                Text("Débit de parole (WPM)", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text(
+                    text = "Pilote length_scale dans Piper VITS (hauteur F0 fixe = 1,0×)",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "\${prosody.targetWpm} mots/min",
+                    color = Color(0xFF38BDF8),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+                Text(
+                    text = String.format("%.2fx", prosody.speechRate),
+                    color = Color(0xFF34D399),
+                    fontSize = 11.sp
+                )
+            }
         }
 
         Slider(
-            value = prosody.speechRate,
-            onValueChange = { onUpdateProsody(it, prosody.pitchSemitones, prosody.pauseScale) },
-            valueRange = 0.75f..1.50f
+            value = prosody.targetWpm.toFloat(),
+            onValueChange = { newWpm ->
+                onUpdateWpm(newWpm.roundToInt())
+            },
+            valueRange = 110f..310f,
+            steps = 20
         )
 
-        // Paliers rapides accessibles au pouce
+        // Paliers WPM rapides accessibles au pouce
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            listOf(0.85f, 1.0f, 1.15f, 1.25f, 1.50f).forEach { preset ->
-                val active = kotlin.math.abs(prosody.speechRate - preset) < 0.03f
+            listOf(120, 155, 195, 230, 270).forEach { presetWpm ->
+                val active = kotlin.math.abs(prosody.targetWpm - presetWpm) < 12
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
                         .background(if (active) Color(0xFF06B6D4) else Color(0xFF1E293B))
-                        .clickable { onUpdateProsody(preset, prosody.pitchSemitones, prosody.pauseScale) }
+                        .clickable { onUpdateWpm(presetWpm) }
                         .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "\${preset}x",
-                        color = if (active) Color(0xFF0B0F17) else Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "\${presetWpm}",
+                            color = if (active) Color(0xFF0B0F17) else Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "m/m",
+                            color = if (active) Color(0xFF0B0F17).copy(alpha = 0.8f) else Color(0xFF94A3B8),
+                            fontSize = 9.sp
+                        )
+                    }
                 }
             }
         }

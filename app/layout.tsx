@@ -1,4 +1,4 @@
-import type {Metadata} from 'next';
+import type {Metadata, Viewport} from 'next';
 import {Literata, Source_Sans_3, JetBrains_Mono} from 'next/font/google';
 import './globals.css';
 
@@ -21,10 +21,25 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-mono',
 });
 
+export const viewport: Viewport = {
+  themeColor: '#1F5F63',
+  width: 'device-width',
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: 'FishReader Studio — Android Overlay & Local Neural TTS',
   description:
     'Simulateur interactif Android et architecture Kotlin complète pour FishReader : widget flottant escamotable Jetpack Compose, extraction AccessibilityService, fallback OCR ML Kit et synthèse vocale hors ligne Sherpa-ONNX / Piper TTS.',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'FishReader',
+  },
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-touch-icon.png',
+  },
   openGraph: {
     title: 'FishReader Studio — Android Overlay & Local Neural TTS',
     description:

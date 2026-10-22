@@ -1,6 +1,6 @@
 {
-  "summary": "Plan d'implémentation de FishReader Studio : simulateur interactif Android (overlay magnétique escamotable, inspecteur d'arborescence AccessibilityNodeInfo, fallback OCR ML Kit avec AccessibilityService.takeScreenshot, synthèse vocale locale Sherpa-ONNX / Piper TTS) et explorateur de code Kotlin prêt pour la production exportable.",
-  "updatedAt": "2026-10-18T08:58:50.538074726Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Mise à jour du plan d'implémentation selon les réponses confirmées : bouton rond discret au repos, scan rapide et sélection directe par toucher sur un paragraphe encadré à l'écran, repli automatique en petite pilule orientée verticalement (cercle animé + trois petits points pour ouvrir le panneau de configuration sans zone de texte), surbrillance directe sur le post, voix masculines différenciées à débit WPM naturel, correction de Stop et Texte copié, et report du défilement automatique à la prochaine étape.",
+  "updatedAt":  "2026-10-21T02:14:55.881137671Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

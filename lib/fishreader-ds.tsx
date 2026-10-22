@@ -26,7 +26,7 @@ export type BubbleModeId =
 export const NB = '\u202F';
 export const NBS = '\u00A0';
 
-export const SPEEDS: number[] = [0.75, 1, 1.15, 1.25, 1.5];
+export const SPEEDS: number[] = [0.85, 1, 1.25, 1.5, 1.75, 2];
 export const SEC_PER_CHAR = 0.065;
 
 export function fmtSpeed(v: number): string {
@@ -200,26 +200,45 @@ export const FR_THEMES: Record<FrThemeId, FrThemePalette> = {
   },
 };
 
+export type FrVoiceId = 'clara' | 'thomas' | 'nicolas' | 'emma';
+
 export interface FrVoiceSpec {
-  id: 'clara' | 'thomas' | 'emma';
+  id: FrVoiceId;
+  indexNumber: number;
+  slotBadge: string;
   name: string;
+  gender: 'Femme' | 'Homme';
+  timbreBadge: string;
+  shortLabel: string;
   lang: string;
+  piperModelId: string;
   desc: string;
   sample: string;
   bcp: 'fr-CA' | 'en-US';
-  geminiVoiceName: 'Kore' | 'Charon' | 'Zephyr';
+  geminiVoiceName: 'Kore' | 'Charon' | 'Puck' | 'Zephyr';
   defaultPitchSemitones: number;
   waveHeights: string[];
+}
+
+export function fmtWpm(speed: number): string {
+  const wpm = Math.round(155 * speed);
+  return `${wpm}${NBS}mots/min`;
 }
 
 export const FR_VOICES: FrVoiceSpec[] = [
   {
     id: 'clara',
+    indexNumber: 1,
+    slotBadge: 'Voix 1/4',
     name: 'Clara',
-    lang: 'Français (Québec) · Studio 24 kHz',
-    desc: 'Voix neuronale chaleureuse, fluide et posée, idéale pour les longs articles et essais.',
+    gender: 'Femme',
+    timbreBadge: 'Féminine Douce & posée',
+    shortLabel: '1/4 · Clara (Femme Douce)',
+    lang: 'Voix 1/4 · Féminine Douce · Français · Studio 24 kHz',
+    piperModelId: 'fr_FR-siwis-medium.onnx',
+    desc: 'Voix féminine chaleureuse, veloutée et posée, idéale pour les articles et longs documents.',
     sample:
-      'Bonjour, je lirai vos textes à voix haute avec une fluidité naturelle, au rythme qui vous convient.',
+      'Bonjour, je suis Clara, voix numéro un sur quatre. Je lis vos textes avec une voix féminine douce et posée, strictement constante du premier au dernier paragraphe.',
     bcp: 'fr-CA',
     geminiVoiceName: 'Kore',
     defaultPitchSemitones: 0.0,
@@ -242,11 +261,17 @@ export const FR_VOICES: FrVoiceSpec[] = [
   },
   {
     id: 'thomas',
+    indexNumber: 2,
+    slotBadge: 'Voix 2/4',
     name: 'Thomas',
-    lang: 'Français (Québec) · Posé 24 kHz',
-    desc: 'Timbre grave, enveloppant et calme, pensé pour les romans, rapports et récits.',
+    gender: 'Homme',
+    timbreBadge: 'Masculine Baryton Grave',
+    shortLabel: '2/4 · Thomas (Homme Grave)',
+    lang: 'Voix 2/4 · Masculine Grave · Français · Baryton 24 kHz',
+    piperModelId: 'fr_FR-tom-medium.onnx',
+    desc: 'Voix masculine baryton grave, profonde et calme, pensée pour les récits et rapports.',
     sample:
-      'Bonjour, je lirai vos textes avec un timbre posé, chaleureux et parfaitement régulier.',
+      'Bonjour, je suis Thomas, voix numéro deux sur quatre. Je lis vos textes avec un timbre masculin grave et profond qui reste identique entre tous les paragraphes.',
     bcp: 'fr-CA',
     geminiVoiceName: 'Charon',
     defaultPitchSemitones: 0.0,
@@ -268,13 +293,52 @@ export const FR_VOICES: FrVoiceSpec[] = [
     ],
   },
   {
-    id: 'emma',
-    name: 'Emma',
-    lang: 'English (US) · Studio 24 kHz',
-    desc: 'Warm, expressive neural narration for English articles and books.',
+    id: 'nicolas',
+    indexNumber: 3,
+    slotBadge: 'Voix 3/4',
+    name: 'Nicolas',
+    gender: 'Homme',
+    timbreBadge: 'Masculine Ténor Clair',
+    shortLabel: '3/4 · Nicolas (Homme Clair)',
+    lang: 'Voix 3/4 · Masculine Claire · Français · Ténor 24 kHz',
+    piperModelId: 'fr_FR-upmc-medium.onnx',
+    desc: 'Voix masculine ténor claire, vive et articulée, parfaite pour les courriels et actualités.',
     sample:
-      'Hello, I will read your texts aloud with a warm, fluid, and natural editorial cadence.',
-    bcp: 'en-US',
+      'Bonjour, je suis Nicolas, voix numéro trois sur quatre. Je garde exactement la même voix masculine claire et articulée tout au long de votre lecture.',
+    bcp: 'fr-CA',
+    geminiVoiceName: 'Puck',
+    defaultPitchSemitones: 0.0,
+    waveHeights: [
+      'h-[9px]',
+      'h-[18px]',
+      'h-[24px]',
+      'h-[15px]',
+      'h-[21px]',
+      'h-[12px]',
+      'h-[19px]',
+      'h-[23px]',
+      'h-[14px]',
+      'h-[17px]',
+      'h-[11px]',
+      'h-[20px]',
+      'h-[15px]',
+      'h-[10px]',
+    ],
+  },
+  {
+    id: 'emma',
+    indexNumber: 4,
+    slotBadge: 'Voix 4/4',
+    name: 'Emma',
+    gender: 'Femme',
+    timbreBadge: 'Féminine Vive & cristalline',
+    shortLabel: '4/4 · Emma (Femme Vive)',
+    lang: 'Voix 4/4 · Féminine Vive · Bilingue FR / EN · 24 kHz',
+    piperModelId: 'fr_FR-gilles-low.onnx',
+    desc: 'Voix féminine vive, claire et cristalline (compatible français et anglais), nettement distincte de Clara.',
+    sample:
+      'Bonjour, je suis Emma, voix numéro quatre sur quatre. Mon timbre féminin vif et cristallin reste parfaitement constant d’un paragraphe à l’autre.',
+    bcp: 'fr-CA',
     geminiVoiceName: 'Zephyr',
     defaultPitchSemitones: 0.0,
     waveHeights: [
@@ -306,6 +370,30 @@ export interface FrDocItem {
 }
 
 export const INITIAL_FR_DOCS: FrDocItem[] = [
+  {
+    id: 'fan-theory',
+    when: 'En-tête social filtré (« Suivre · 4 h · Public » exclu)',
+    kicker: 'Publication Facebook · FAN theory',
+    title: 'Les 7 règles silencieuses du charisme calme',
+    progress: 0,
+    paragraphs: [
+      [
+        'On croit souvent que le charisme appartient à ceux qui parlent le plus fort dans une pièce.',
+        'En réalité, l’attention durable se tourne presque toujours vers la personne qui maîtrise son rythme et ses silences.',
+      ],
+      [
+        'Première règle : marquer une pause de deux secondes avant de répondre à une question importante.',
+        'Ce court silence montre que vous écoutez réellement votre interlocuteur au lieu de simplement attendre votre tour de parler.',
+      ],
+      [
+        'Deuxième règle : baisser légèrement l’intonation à la fin de vos phrases déclaratives.',
+        'Une voix qui se pose inspire immédiatement confiance et évite l’impression de chercher l’approbation.',
+      ],
+      [
+        'Troisième règle : accorder toute votre présence visuelle à la personne qui vous parle, sans jamais vérifier votre téléphone au milieu d’un échange.',
+      ],
+    ],
+  },
   {
     id: 'clinique',
     when: `Aujourd’hui · 7${NBS}h${NBS}42`,
@@ -711,18 +799,30 @@ export function FrVoiceCard({
             aria-hidden="true"
             className={`w-9 h-9 rounded-full grid place-items-center shrink-0 font-[family-name:var(--font-serif)] font-semibold text-[14px] ${theme.highlightBg} ${theme.inkText}`}
           >
-            {voice.name[0]}
+            {voice.indexNumber}
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p
+                className={`m-0 font-[family-name:var(--font-serif)] font-semibold text-[18px] leading-[24px] ${theme.inkText}`}
+              >
+                {voice.name}
+              </p>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-[0.04em] border ${theme.paperBg} ${theme.ruleBorder} ${theme.accentText}`}
+              >
+                {voice.slotBadge}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${theme.paperBg} ${theme.ruleBorder} ${theme.inkMutedText}`}
+              >
+                {voice.timbreBadge}
+              </span>
+            </div>
             <p
-              className={`m-0 font-[family-name:var(--font-serif)] font-semibold text-[18px] leading-[24px] ${theme.inkText}`}
+              className={`m-0 mt-0.5 text-[13px] leading-[18px] ${theme.inkMutedText}`}
             >
-              {voice.name}
-            </p>
-            <p
-              className={`m-0 text-[13px] leading-[18px] ${theme.inkMutedText}`}
-            >
-              {voice.lang}
+              {voice.lang} · <code className="text-[11px]">{voice.piperModelId}</code>
             </p>
           </div>
         </div>
@@ -731,7 +831,7 @@ export function FrVoiceCard({
           {voice.desc}
         </p>
 
-        <div className="flex items-center justify-between pr-12">
+        <div className="flex items-center justify-between gap-2 pr-12">
           <div
             className="flex items-center gap-[3px] h-[24px]"
             aria-hidden="true"
@@ -745,6 +845,13 @@ export function FrVoiceCard({
               />
             ))}
           </div>
+          {selected && (
+            <span
+              className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${theme.accentBg} ${theme.onAccentText}`}
+            >
+              Voix verrouillée (constante sur tous les §)
+            </span>
+          )}
         </div>
 
         {selected && (
