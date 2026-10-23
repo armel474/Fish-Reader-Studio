@@ -82,6 +82,10 @@ public class FishOverlayService extends Service {
     private ValueAnimator scanAnimator;
     private ValueAnimator pulseAnimator;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ScanSession scanSession = new ScanSession();
+    private String sourcePackage = "";
+    private Runnable pendingScrollScan;
+    private boolean destroyed;
 
     @Override
     public void onCreate() {
@@ -89,6 +93,11 @@ public class FishOverlayService extends Service {
         this.windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         this.voiceEngine = new FishVoiceEngine(this);
         this.voiceEngine.setListener(new FishVoiceEngine.PlaybackListener() {
+            @Override
+            public void onPlaybackError(String message) {
+                Toast.makeText(FishOverlayService.this, message, Toast.LENGTH_LONG).show();
+            }
+
             @Override
             public void onStateChanged(boolean isPlaying, boolean isLoading, int currentSentenceIndex, int totalSentences, String currentSentence, String activeVoiceLabel, float speedMultiplier, int activeParagraphIndex) {
                 FishOverlayService.this.updateUiFromEngine(
@@ -103,6 +112,7 @@ public class FishOverlayService extends Service {
                 );
             }
         });
+        FishAccessibilityService.setScreenListener(this::onScreenChanged);
         startForegroundSafe();
         ensureOverlayAttached();
     }
@@ -119,9 +129,7 @@ public class FishOverlayService extends Service {
             if (ACTION_SPEAK_TEXT.equals(action)) {
                 String text = intent.getStringExtra(EXTRA_TEXT);
                 if (!TextUtils.isEmpty(text)) {
-                    this.currentBlocks.clear();
-                    this.activeParagraphIndex = -1;
-                    detachScreenCanvasOverlay();
+                    stopReadingAndResetToCircle();
                     switchUiState(UI_STATE_VERTICAL_PILL);
                     this.voiceEngine.speakText(text);
                 }
@@ -610,45 +618,84 @@ public class FishOverlayService extends Service {
     }
 
     private void onIdleCircleTapped() {
-        if (FishAccessibilityService.getInstance() == null) {
-            Toast.makeText(
-                    this,
-                    "Activez « Fish Reader » dans Accessibilité pour scanner l’écran.",
-                    Toast.LENGTH_LONG
-            ).show();
-            Intent openApp = new Intent(this, MainActivity.class);
-            openApp.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(openApp);
+        FishAccessibilityService svc = FishAccessibilityService.getInstance();
+        stopReadingAndResetToCircle();
+        if (svc == null) {
+            Toast.makeText(this, "Activez FishReader dans Accessibilité pour scanner l’écran.", Toast.LENGTH_LONG).show();
             return;
         }
+        sourcePackage = svc.getForegroundPackage();
+        final String expectedPackage = sourcePackage;
+        final long token = scanSession.begin();
         switchUiState(UI_STATE_SCAN_SELECT);
-        attachInteractiveScanCanvas();
-        this.mainHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                FishAccessibilityService svc = FishAccessibilityService.getInstance();
-                List<FishAccessibilityService.ScreenBlock> blocks = svc != null
-                        ? svc.captureStructuredScreenBlocks()
-                        : new ArrayList<FishAccessibilityService.ScreenBlock>();
-                if (blocks.isEmpty()) {
-                    blocks = FishAccessibilityService.getLastCapturedBlocks();
+        // Capture the application, not FishReader's own controls or selection canvas.
+        if (rootContainer != null) rootContainer.setVisibility(View.GONE);
+        Toast.makeText(this, "Analyse du texte à l’écran…", Toast.LENGTH_SHORT).show();
+        mainHandler.postDelayed(() -> {
+            if (destroyed || !scanSession.isPending()) return;
+            // A newer request may have superseded this delay.
+            if (!scanSession.isCurrent(token)) return;
+            svc.captureScreen(new FishAccessibilityService.CaptureCallback() {
+                @Override
+                public void onCaptured(List<FishAccessibilityService.ScreenBlock> blocks) {
+                    mainHandler.post(() -> {
+                        if (destroyed || !scanSession.complete(token)) return;
+                        if (rootContainer != null) rootContainer.setVisibility(View.VISIBLE);
+                        if (!expectedPackage.isEmpty() && !expectedPackage.equals(svc.getForegroundPackage())) {
+                            showScanFailure("L’écran a changé pendant le scan. Relancez-le sur le texte souhaité.");
+                            return;
+                        }
+                        if (blocks.isEmpty()) {
+                            showScanFailure("Aucun texte lisible détecté sur cet écran.");
+                            return;
+                        }
+                        currentBlocks = new ArrayList<>(blocks);
+                        attachInteractiveScanCanvas();
+                        if (!screenCanvasAttached) showScanFailure("Impossible d’afficher la sélection. Vérifiez l’autorisation de superposition.");
+                    });
                 }
-                if (blocks.isEmpty()) {
-                    FishOverlayService.this.detachScreenCanvasOverlay();
-                    FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
-                    Toast.makeText(
-                            FishOverlayService.this,
-                            "Aucun paragraphe détecté sur cet écran. Faites défiler le post puis réessayez.",
-                            Toast.LENGTH_SHORT
-                    ).show();
-                } else {
-                    FishOverlayService.this.currentBlocks = blocks;
-                    if (FishOverlayService.this.screenCanvasView != null) {
-                        FishOverlayService.this.screenCanvasView.invalidate();
-                    }
+
+                @Override
+                public void onFailure(String message) {
+                    mainHandler.post(() -> {
+                        if (!destroyed && scanSession.complete(token)) showScanFailure(message);
+                    });
                 }
-            }
-        }, 120L);
+            });
+        }, 180L);
+        mainHandler.postDelayed(() -> {
+            if (!destroyed && scanSession.complete(token)) showScanFailure("Le scan a pris trop de temps. Réessayez.");
+        }, 10000L);
+    }
+
+    private void showScanFailure(String message) {
+        stopReadingAndResetToCircle();
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void onScreenChanged(String packageName, boolean scrolled) {
+        FishAccessibilityService svc = FishAccessibilityService.getInstance();
+        if (destroyed || svc == null) return;
+        String foreground = svc.getForegroundPackage();
+        if (foreground.isEmpty() || foreground.equals(getPackageName())) return;
+        boolean changedApp = !sourcePackage.isEmpty() && !sourcePackage.equals(foreground);
+        if (changedApp) {
+            stopReadingAndResetToCircle();
+            sourcePackage = foreground;
+            return;
+        }
+        if (!scrolled || !foreground.equals(packageName)) return;
+        // Coordinates belong to one viewport only. Never leave a stale highlight after scrolling.
+        if (!currentBlocks.isEmpty() || scanSession.isPending()) stopReadingAndResetToCircle();
+        boolean rescan = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE)
+                .getBoolean("scan_after_scroll", false);
+        if (!rescan) return;
+        if (pendingScrollScan != null) mainHandler.removeCallbacks(pendingScrollScan);
+        pendingScrollScan = () -> {
+            pendingScrollScan = null;
+            onIdleCircleTapped();
+        };
+        mainHandler.postDelayed(pendingScrollScan, 700L);
     }
 
     private void attachInteractiveScanCanvas() {
@@ -750,6 +797,17 @@ public class FishOverlayService extends Service {
     }
 
     private void stopReadingAndResetToCircle() {
+        scanSession.cancel();
+        if (pendingScrollScan != null) mainHandler.removeCallbacks(pendingScrollScan);
+        pendingScrollScan = null;
+        if (rootContainer != null) {
+            rootContainer.setVisibility(View.VISIBLE);
+            if (floatingParams != null) {
+                floatingParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                try { windowManager.updateViewLayout(rootContainer, floatingParams); }
+                catch (RuntimeException ignored) {}
+            }
+        }
         this.voiceEngine.stopAndClear();
         this.activeParagraphIndex = -1;
         this.currentBlocks.clear();
@@ -758,6 +816,8 @@ public class FishOverlayService extends Service {
     }
 
     private void readCopiedOrSelectedTextWithFocus() {
+        stopReadingAndResetToCircle();
+        final long token = scanSession.begin();
         if (this.rootContainer != null && this.floatingParams != null) {
             try {
                 this.floatingParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -768,6 +828,7 @@ public class FishOverlayService extends Service {
         this.mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
+                if (destroyed || !scanSession.complete(token)) return;
                 String text = FishOverlayService.this.extractClipboardTextNow();
                 if (FishOverlayService.this.rootContainer != null && FishOverlayService.this.floatingParams != null) {
                     try {
@@ -1068,6 +1129,14 @@ public class FishOverlayService extends Service {
             this.scanLinePaint.setColor(Color.parseColor("#996EE7B7"));
         }
 
+        private Rect localBounds(Rect screenBounds) {
+            int[] location = new int[2];
+            getLocationOnScreen(location);
+            Rect bounds = new Rect(screenBounds);
+            bounds.offset(-location[0], -location[1]);
+            return bounds;
+        }
+
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
@@ -1093,11 +1162,12 @@ public class FishOverlayService extends Service {
                     FishAccessibilityService.ScreenBlock active = FishOverlayService.this.currentBlocks.get(
                             FishOverlayService.this.activeParagraphIndex
                     );
+                    Rect activeBounds = localBounds(active.bounds);
                     RectF rect = new RectF(
-                            Math.max(FishOverlayService.this.dp(4), active.bounds.left - FishOverlayService.this.dp(5)),
-                            Math.max(FishOverlayService.this.dp(36), active.bounds.top - FishOverlayService.this.dp(4)),
-                            Math.min(width - FishOverlayService.this.dp(4), active.bounds.right + FishOverlayService.this.dp(5)),
-                            Math.min(height - FishOverlayService.this.dp(8), active.bounds.bottom + FishOverlayService.this.dp(4))
+                            Math.max(FishOverlayService.this.dp(4), activeBounds.left - FishOverlayService.this.dp(5)),
+                            Math.max(FishOverlayService.this.dp(36), activeBounds.top - FishOverlayService.this.dp(4)),
+                            Math.min(width - FishOverlayService.this.dp(4), activeBounds.right + FishOverlayService.this.dp(5)),
+                            Math.min(height - FishOverlayService.this.dp(8), activeBounds.bottom + FishOverlayService.this.dp(4))
                     );
                     canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.activeFillPaint);
                     canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.activeStrokePaint);
@@ -1109,11 +1179,12 @@ public class FishOverlayService extends Service {
 
             for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
                 FishAccessibilityService.ScreenBlock block = FishOverlayService.this.currentBlocks.get(i);
+                Rect blockBounds = localBounds(block.bounds);
                 RectF rect = new RectF(
-                        Math.max(FishOverlayService.this.dp(6), block.bounds.left - FishOverlayService.this.dp(4)),
-                        Math.max(FishOverlayService.this.dp(76), block.bounds.top - FishOverlayService.this.dp(3)),
-                        Math.min(width - FishOverlayService.this.dp(6), block.bounds.right + FishOverlayService.this.dp(4)),
-                        Math.min(height - FishOverlayService.this.dp(12), block.bounds.bottom + FishOverlayService.this.dp(3))
+                        Math.max(FishOverlayService.this.dp(6), blockBounds.left - FishOverlayService.this.dp(4)),
+                        Math.max(FishOverlayService.this.dp(76), blockBounds.top - FishOverlayService.this.dp(3)),
+                        Math.min(width - FishOverlayService.this.dp(6), blockBounds.right + FishOverlayService.this.dp(4)),
+                        Math.min(height - FishOverlayService.this.dp(12), blockBounds.bottom + FishOverlayService.this.dp(3))
                 );
                 canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.frameFillPaint);
                 canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.frameStrokePaint);
@@ -1186,8 +1257,7 @@ public class FishOverlayService extends Service {
             float y = event.getY();
 
             if (this.closeScanBtnRect.contains(x, y)) {
-                FishOverlayService.this.detachScreenCanvasOverlay();
-                FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
+                FishOverlayService.this.stopReadingAndResetToCircle();
                 return true;
             }
             if (this.readAllBtnRect.contains(x, y)) {
@@ -1195,35 +1265,21 @@ public class FishOverlayService extends Service {
                 return true;
             }
 
+            // Hit-test in screen coordinates, matching accessibility and OCR rectangles.
+            int selected = -1;
+            long smallestArea = Long.MAX_VALUE;
             for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
-                Rect b = FishOverlayService.this.currentBlocks.get(i).bounds;
-                if (x >= b.left - FishOverlayService.this.dp(12)
-                        && x <= b.right + FishOverlayService.this.dp(12)
-                        && y >= b.top - FishOverlayService.this.dp(10)
-                        && y <= b.bottom + FishOverlayService.this.dp(10)) {
-                    FishOverlayService.this.startReadingFromParagraph(i);
-                    return true;
+                Rect bounds = FishOverlayService.this.currentBlocks.get(i).bounds;
+                long area = (long) bounds.width() * bounds.height();
+                if (bounds.contains((int) event.getRawX(), (int) event.getRawY()) && area < smallestArea) {
+                    smallestArea = area;
+                    selected = i;
                 }
             }
-
-            if (!FishOverlayService.this.currentBlocks.isEmpty()) {
-                float bestDist = Float.MAX_VALUE;
-                int bestIdx = 0;
-                for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
-                    float dist = Math.abs(y - FishOverlayService.this.currentBlocks.get(i).bounds.exactCenterY());
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestIdx = i;
-                    }
-                }
-                if (bestDist < FishOverlayService.this.dp(90)) {
-                    FishOverlayService.this.startReadingFromParagraph(bestIdx);
-                    return true;
-                }
+            if (selected >= 0) {
+                FishOverlayService.this.startReadingFromParagraph(selected);
             }
-
-            FishOverlayService.this.detachScreenCanvasOverlay();
-            FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
+            // Tapping blank space must never choose an arbitrary nearby paragraph.
             return true;
         }
     }
@@ -1237,7 +1293,17 @@ public class FishOverlayService extends Service {
     }
 
     @Override
+    public void onConfigurationChanged(android.content.res.Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        stopReadingAndResetToCircle();
+    }
+
+    @Override
     public void onDestroy() {
+        destroyed = true;
+        scanSession.cancel();
+        mainHandler.removeCallbacksAndMessages(null);
+        FishAccessibilityService.setScreenListener(null);
         if (this.pulseAnimator != null) {
             try {
                 this.pulseAnimator.cancel();
@@ -1258,3 +1324,4 @@ public class FishOverlayService extends Service {
         super.onDestroy();
     }
 }
+

@@ -63,7 +63,7 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView badge = new TextView(this);
-        badge.setText("FISH READER ANDROID · v2.4 PILULE VERTICALE & SCAN DIRECT");
+        badge.setText("FISH READER ANDROID · " + BuildConfig.VERSION_NAME);
         badge.setTextColor(Color.parseColor("#1E4D3B"));
         badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.0f);
         badge.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
@@ -84,7 +84,7 @@ public class MainActivity extends Activity {
         TextView subtitle = new TextView(this);
         subtitle.setText(
                 "1. Petit rond discret au repos sur le bord de l’écran.\n" +
-                "2. Touchez le rond : scan rapide (450 ms) et cadres cliquables sur chaque paragraphe du post.\n" +
+                "2. Touchez le rond : analyse du texte visible, puis sélection d’un bloc à lire.\n" +
                 "3. Touchez un paragraphe : surbrillance directe sur l’écran et repli automatique en petite pilule verticale (◉ Pause + ⋯ Réglages)."
         );
         subtitle.setTextColor(Color.parseColor("#57524A"));
@@ -137,11 +137,25 @@ public class MainActivity extends Activity {
         permCard.addView(this.launchOverlayBtn);
         root.addView(permCard);
 
+        android.widget.Switch rescanSwitch = new android.widget.Switch(this);
+        rescanSwitch.setText("Proposer un nouveau scan après mon défilement");
+        rescanSwitch.setTextColor(Color.parseColor("#181512"));
+        rescanSwitch.setChecked(getSharedPreferences("fish_reader_prefs", MODE_PRIVATE)
+                .getBoolean("scan_after_scroll", false));
+        rescanSwitch.setOnCheckedChangeListener((button, checked) ->
+                getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).edit()
+                        .putBoolean("scan_after_scroll", checked).apply());
+        root.addView(rescanSwitch);
+        TextView rescanHelp = new TextView(this);
+        rescanHelp.setText("Après le défilement, la lecture s’arrête. Si cette option est active, les blocs du nouvel écran sont proposés après une courte pause ; touchez celui à lire.");
+        rescanHelp.setTextColor(Color.parseColor("#57524A"));
+        root.addView(rescanHelp);
+
         LinearLayout voiceCard = createCard();
         ((LinearLayout.LayoutParams) voiceCard.getLayoutParams()).topMargin = dp(14);
 
         TextView voiceTitle = new TextView(this);
-        voiceTitle.setText("4 Voix stockées (Constance verrouillée : Clara, Thomas, Nicolas, Emma)");
+        voiceTitle.setText("Profils vocaux · voix françaises installées sur Android");
         voiceTitle.setTextColor(Color.parseColor("#181512"));
         voiceTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.0f);
         voiceTitle.setTypeface(Typeface.SERIF, Typeface.BOLD);
@@ -488,3 +502,4 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
+
