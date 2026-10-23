@@ -5,6 +5,7 @@ import android.graphics.Rect;
 import android.text.TextUtils;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -16,6 +17,18 @@ import java.util.regex.Pattern;
 
 public class FishAccessibilityService extends AccessibilityService {
     private static FishAccessibilityService instance;
+    public interface ScreenListener {
+        void onScreenChanged(String packageName, boolean scrolled);
+    }
+    private static ScreenListener screenListener;
+    public static void setScreenListener(ScreenListener listener) {
+        screenListener = listener;
+    }
+    public interface CaptureCallback {
+        void onCaptured(List<ScreenBlock> blocks);
+        void onFailure(String message);
+    }
+    private ScreenOcrScanner ocrScanner;
     private static volatile String lastCapturedScreenText = "";
     private static volatile String lastCopiedOrSelectedText = "";
     private static volatile List<ScreenBlock> lastCapturedBlocks = new ArrayList<>();
@@ -67,6 +80,7 @@ public class FishAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        ocrScanner = new ScreenOcrScanner(this);
     }
 
     @Override
@@ -81,6 +95,10 @@ public class FishAccessibilityService extends AccessibilityService {
             return;
         }
         int eventType = event.getEventType();
+        if (screenListener != null && (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED)) {
+            screenListener.onScreenChanged(pkg, eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED);
+        }
         if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED
                 || eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
                 || eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -170,6 +188,7 @@ public class FishAccessibilityService extends AccessibilityService {
         if (instance == this) {
             instance = null;
         }
+        if (ocrScanner != null) ocrScanner.close();
         super.onDestroy();
     }
 
@@ -177,7 +196,7 @@ public class FishAccessibilityService extends AccessibilityService {
         List<ScreenBlock> blocks = new ArrayList<>();
         AccessibilityNodeInfo root = null;
         try {
-            root = getRootInActiveWindow();
+            root = findApplicationRoot();
             if (root != null) {
                 CharSequence rootPkg = root.getPackageName();
                 if (rootPkg == null || !"app.fishreadv2".equals(rootPkg.toString())) {
@@ -195,7 +214,7 @@ public class FishAccessibilityService extends AccessibilityService {
                 }
             }
         }
-        if (!blocks.isEmpty()) {
+        {
             lastCapturedBlocks = new ArrayList<>(blocks);
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < blocks.size(); i++) {
@@ -212,7 +231,7 @@ public class FishAccessibilityService extends AccessibilityService {
     public String captureCurrentScreenTextNow() {
         List<ScreenBlock> blocks = captureStructuredScreenBlocks();
         if (blocks.isEmpty()) {
-            return lastCapturedScreenText;
+            return "";
         }
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < blocks.size(); i++) {
@@ -222,6 +241,58 @@ public class FishAccessibilityService extends AccessibilityService {
             sb.append(blocks.get(i).text);
         }
         return sb.toString();
+    }
+
+    private AccessibilityNodeInfo findApplicationRoot() {
+        List<AccessibilityWindowInfo> windows = getWindows();
+        if (windows != null) {
+            for (AccessibilityWindowInfo window : windows) {
+                if (window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION
+                        && (window.isActive() || window.isFocused())) {
+                    AccessibilityNodeInfo root = window.getRoot();
+                    if (root == null) continue;
+                    if (!getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
+                        return root;
+                    }
+                    root.recycle();
+                }
+            }
+        }
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root != null && getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
+            root.recycle();
+            return null;
+        }
+        return root;
+    }
+
+    public String getForegroundPackage() {
+        AccessibilityNodeInfo root = findApplicationRoot();
+        if (root == null) return "";
+        try {
+            return root.getPackageName() == null ? "" : root.getPackageName().toString();
+        } finally {
+            root.recycle();
+        }
+    }
+
+    /** Called only after FishReader's own windows have been hidden. */
+    public void captureScreen(CaptureCallback callback) {
+        List<ScreenBlock> blocks = captureStructuredScreenBlocks();
+        boolean coarseBounds = false;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        for (ScreenBlock block : blocks) {
+            if (block.bounds.height() > height / 3 && block.text.length() > 180) {
+                coarseBounds = true;
+            }
+        }
+        if (!blocks.isEmpty() && !coarseBounds) {
+            callback.onCaptured(blocks);
+            return;
+        }
+        if (ocrScanner == null) ocrScanner = new ScreenOcrScanner(this);
+        // No fallback to a previous document when OCR fails.
+        ocrScanner.capture(callback);
     }
 
     private static class RawNodeBlock {
@@ -248,7 +319,9 @@ public class FishAccessibilityService extends AccessibilityService {
             }
             Rect bounds = new Rect();
             node.getBoundsInScreen(bounds);
-            boolean validBounds = bounds.width() > 60 && bounds.height() > 18 && bounds.bottom > 110;
+            Rect screen = new Rect(0, 0, getResources().getDisplayMetrics().widthPixels,
+                    getResources().getDisplayMetrics().heightPixels);
+            boolean validBounds = bounds.intersect(screen) && bounds.width() > 0 && bounds.height() > 0;
             String candidate = null;
             CharSequence text = node.getText();
             CharSequence desc = node.getContentDescription();
@@ -279,11 +352,8 @@ public class FishAccessibilityService extends AccessibilityService {
         Collections.sort(rawNodes, new Comparator<RawNodeBlock>() {
             @Override
             public int compare(RawNodeBlock a, RawNodeBlock b) {
-                int dy = a.bounds.top - b.bounds.top;
-                if (Math.abs(dy) > 18) {
-                    return dy;
-                }
-                return a.bounds.left - b.bounds.left;
+                int dy = Integer.compare(a.bounds.top, b.bounds.top);
+                return dy != 0 ? dy : Integer.compare(a.bounds.left, b.bounds.left);
             }
         });
 
@@ -297,6 +367,7 @@ public class FishAccessibilityService extends AccessibilityService {
             boolean handled = false;
             for (int j = 0; j < deduped.size(); j++) {
                 String normExist = normalizeForDedup(deduped.get(j).text);
+                if (!Rect.intersects(candidate.bounds, deduped.get(j).bounds)) continue;
                 if (normExist.equals(normCand) || normExist.contains(normCand)) {
                     handled = true;
                     break;
@@ -317,43 +388,11 @@ public class FishAccessibilityService extends AccessibilityService {
 
         for (int i = 0; i < deduped.size(); i++) {
             RawNodeBlock block = deduped.get(i);
-            String[] rawParagraphs = block.text.split("\\n\\s*\\n|\\r\\n\\s*\\r\\n|\\n");
-            List<String> validParagraphs = new ArrayList<>();
-            int totalEstimatedLines = 0;
-            for (String p : rawParagraphs) {
-                String cleaned = cleanSocialHeaderPrefix(p.trim());
-                if (cleaned.length() >= 8 && !isUiNoiseBlock(cleaned)) {
-                    validParagraphs.add(cleaned);
-                    int estLines = Math.max(1, (int) Math.ceil(cleaned.length() / 42.0));
-                    totalEstimatedLines += estLines;
-                }
-            }
-            if (validParagraphs.isEmpty()) {
-                continue;
-            }
-            int top = block.bounds.top;
-            int totalHeight = Math.max(36, block.bounds.height());
-            int cumulativeLines = 0;
-
-            for (int k = 0; k < validParagraphs.size(); k++) {
-                String para = validParagraphs.get(k);
-                int estLines = Math.max(1, (int) Math.ceil(para.length() / 42.0));
-                int subTop = top + (totalHeight * cumulativeLines) / Math.max(1, totalEstimatedLines);
-                cumulativeLines += estLines;
-                int subBottom = top + (totalHeight * cumulativeLines) / Math.max(1, totalEstimatedLines);
-                if (subBottom - subTop < 32) {
-                    subBottom = subTop + 32;
-                }
-                String normPara = normalizeForDedup(para);
-                if (seenParagraphNorms.contains(normPara)) {
-                    continue;
-                }
-                seenParagraphNorms.add(normPara);
-                Rect subRect = new Rect(block.bounds.left, subTop, block.bounds.right, subBottom);
-                List<String> sentences = splitIntoSentences(para);
-                if (!sentences.isEmpty()) {
-                    result.add(new ScreenBlock(para, subRect, sentences));
-                }
+            String text = block.text.trim();
+            String norm = normalizeForDedup(text);
+            if (seenParagraphNorms.add(norm + "@" + block.bounds.flattenToString())) {
+                List<String> sentences = splitIntoSentences(text);
+                if (!sentences.isEmpty()) result.add(new ScreenBlock(text, block.bounds, sentences));
             }
         }
         return result;
@@ -442,3 +481,4 @@ public class FishAccessibilityService extends AccessibilityService {
         return out;
     }
 }
+

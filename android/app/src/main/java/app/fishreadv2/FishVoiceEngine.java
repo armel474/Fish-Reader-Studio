@@ -6,6 +6,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
@@ -54,6 +55,7 @@ public class FishVoiceEngine {
     };
 
     public interface PlaybackListener {
+        default void onPlaybackError(String message) {}
         void onStateChanged(boolean isPlaying, boolean isLoading, int currentSentenceIndex, int totalSentences, String currentSentence, String activeVoiceLabel, float speedMultiplier, int activeParagraphIndex);
     }
 
@@ -66,6 +68,7 @@ public class FishVoiceEngine {
     private PlaybackListener listener;
     private TextToSpeech systemTts;
     private volatile boolean systemTtsReady = false;
+    private long ttsWaitStartedAt;
     private VoiceSpec selectedVoice = VOICES[0];
     private float speedMultiplier = 1.0f;
     private final Map<String, Voice> lockedAndroidVoices = new HashMap<>();
@@ -206,7 +209,7 @@ public class FishVoiceEngine {
                     @Override
                     public void run() {
                         if (gen == FishVoiceEngine.this.playbackGeneration && FishVoiceEngine.this.isPlaying) {
-                            FishVoiceEngine.this.advanceToNextSentence(gen);
+                            FishVoiceEngine.this.failPlayback("La synthèse vocale a échoué. Vérifiez la voix installée puis réessayez.");
                         }
                     }
                 });
@@ -228,7 +231,7 @@ public class FishVoiceEngine {
             }
         } catch (Throwable ignored) {
         }
-        return this.playbackGeneration;
+        return -1;
     }
 
     private boolean applyDistinctFrenchVoice(VoiceSpec spec) {
@@ -239,8 +242,8 @@ public class FishVoiceEngine {
             if (Build.VERSION.SDK_INT >= 21) {
                 Voice cached = this.lockedAndroidVoices.get(spec.id);
                 if (cached != null) {
-                    this.systemTts.setVoice(cached);
-                    return true;
+                    if (this.systemTts.setVoice(cached) == TextToSpeech.SUCCESS) return true;
+                    this.lockedAndroidVoices.remove(spec.id);
                 }
                 Set<Voice> allVoices = this.systemTts.getVoices();
                 if (allVoices != null && !allVoices.isEmpty()) {
@@ -259,6 +262,7 @@ public class FishVoiceEngine {
                                 Set<String> features = v.getFeatures();
                                 String featStr = features != null ? features.toString().toLowerCase(Locale.ROOT) : "";
                                 boolean isNetwork = v.isNetworkConnectionRequired() || name.contains("network");
+                                if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
                                 boolean isMale = (name.contains("male") && !name.contains("female"))
                                         || name.contains("-frd") || name.contains("-frb")
                                         || name.contains("thomas") || name.contains("nicolas")
@@ -310,7 +314,7 @@ public class FishVoiceEngine {
 
                     boolean wantsMale = "male".equalsIgnoreCase(spec.gender);
                     List<Voice> primaryPool = wantsMale ? localMale : localFemale;
-                    List<Voice> pool = !primaryPool.isEmpty() ? primaryPool : (wantsMale ? netMale : netFemale);
+                    List<Voice> pool = primaryPool;
 
                     Voice chosen = null;
                     if (!pool.isEmpty()) {
@@ -318,14 +322,13 @@ public class FishVoiceEngine {
                         chosen = pool.get(idx);
                     } else if (!localAll.isEmpty()) {
                         chosen = localAll.get(0);
-                    } else if (!netAll.isEmpty()) {
-                        chosen = netAll.get(0);
                     }
 
                     if (chosen != null) {
-                        this.lockedAndroidVoices.put(spec.id, chosen);
-                        this.systemTts.setVoice(chosen);
-                        return true;
+                        if (this.systemTts.setVoice(chosen) == TextToSpeech.SUCCESS) {
+                            this.lockedAndroidVoices.put(spec.id, chosen);
+                            return true;
+                        }
                     }
                 }
             }
@@ -420,6 +423,7 @@ public class FishVoiceEngine {
         if (blocks == null || blocks.isEmpty()) {
             return;
         }
+        stopOtherInstances();
         syncLockedVoiceFromPrefs();
         syncSpeedFromPrefs();
         int safeStartPara = Math.max(0, Math.min(startParagraphIndex, blocks.size() - 1));
@@ -471,6 +475,7 @@ public class FishVoiceEngine {
         }
         syncLockedVoiceFromPrefs();
         syncSpeedFromPrefs();
+        stopOtherInstances();
         String cleaned = FishAccessibilityService.cleanSocialHeaderPrefix(rawText.trim());
         String effective = cleaned.isEmpty() ? rawText.trim() : cleaned;
         String[] paragraphs = effective.split("\\n\\s*\\n|\\n");
@@ -508,6 +513,12 @@ public class FishVoiceEngine {
         this.isPlaying = true;
         this.isLoading = false;
         speakCurrentSentence();
+    }
+
+    private void stopOtherInstances() {
+        for (FishVoiceEngine engine : sActiveInstances) {
+            if (engine != this) engine.stopAndClear();
+        }
     }
 
     public void togglePlayPause() {
@@ -605,10 +616,7 @@ public class FishVoiceEngine {
                 }, delayMs);
                 return;
             }
-            this.isPlaying = false;
-            this.isLoading = false;
-            this.currentIndex = 0;
-            notifyState();
+            stopAndClear();
         }
     }
 
@@ -626,7 +634,8 @@ public class FishVoiceEngine {
         syncSpeedFromPrefs();
         final int gen = ++this.playbackGeneration;
         String sentence = this.sentences[this.currentIndex];
-        this.isLoading = false;
+        this.isLoading = true;
+        this.ttsWaitStartedAt = SystemClock.uptimeMillis();
         notifyState();
         speakWithSystemTtsNow(sentence, gen);
     }
@@ -658,6 +667,10 @@ public class FishVoiceEngine {
                     return;
                 }
                 if (FishVoiceEngine.this.systemTts == null || !FishVoiceEngine.this.systemTtsReady) {
+                    if (SystemClock.uptimeMillis() - FishVoiceEngine.this.ttsWaitStartedAt > 8000L) {
+                        FishVoiceEngine.this.failPlayback("Le moteur vocal ne répond pas. Vérifiez les voix hors ligne dans les paramètres Android.");
+                        return;
+                    }
                     FishVoiceEngine.this.mainHandler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
@@ -671,8 +684,12 @@ public class FishVoiceEngine {
                 try {
                     VoiceSpec voice = FishVoiceEngine.this.syncLockedVoiceFromPrefs();
                     float speed = FishVoiceEngine.this.syncSpeedFromPrefs();
-                    FishVoiceEngine.this.applyDistinctFrenchVoice(voice);
-                    FishVoiceEngine.this.systemTts.setPitch(voice.fallbackPitch);
+                    if (!FishVoiceEngine.this.applyDistinctFrenchVoice(voice)) {
+                        FishVoiceEngine.this.failPlayback("Aucune voix française hors ligne disponible. Installez-en une dans les paramètres de synthèse vocale Android.");
+                        return;
+                    }
+                    // Preserve the installed voice's natural pitch; changing speed must not fake a gender.
+                    FishVoiceEngine.this.systemTts.setPitch(1.0f);
                     float effectiveRate = Math.max(0.65f, Math.min(2.2f, voice.rateFactor * speed));
                     FishVoiceEngine.this.systemTts.setSpeechRate(effectiveRate);
                     String normalized = normalizeSentenceForConstantVoice(sentence);
@@ -683,7 +700,8 @@ public class FishVoiceEngine {
                     if (Build.VERSION.SDK_INT >= 21) {
                         Bundle params = new Bundle();
                         params.putString("networkTts", "false");
-                        FishVoiceEngine.this.systemTts.speak(normalized, TextToSpeech.QUEUE_FLUSH, params, uttId);
+                        int status = FishVoiceEngine.this.systemTts.speak(normalized, TextToSpeech.QUEUE_FLUSH, params, uttId);
+                        if (status == TextToSpeech.ERROR) FishVoiceEngine.this.failPlayback("Le moteur vocal a refusé cette lecture.");
                     } else {
                         HashMap<String, String> params = new HashMap<>();
                         params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, uttId);
@@ -691,10 +709,16 @@ public class FishVoiceEngine {
                         FishVoiceEngine.this.systemTts.speak(normalized, TextToSpeech.QUEUE_FLUSH, params);
                     }
                 } catch (Throwable ignored) {
-                    FishVoiceEngine.this.advanceToNextSentence(gen);
+                    FishVoiceEngine.this.failPlayback("Impossible de lancer la synthèse vocale.");
                 }
             }
         });
+    }
+
+    private void failPlayback(String message) {
+        pause();
+        if (listener != null) listener.onPlaybackError(message);
+        else android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show();
     }
 
     private void notifyState() {
@@ -727,6 +751,8 @@ public class FishVoiceEngine {
 
     public void shutdown() {
         stopAndClear();
+        mainHandler.removeCallbacksAndMessages(null);
+        listener = null;
         sActiveInstances.remove(this);
         if (this.systemTts != null) {
             try {
@@ -737,3 +763,4 @@ public class FishVoiceEngine {
         }
     }
 }
+

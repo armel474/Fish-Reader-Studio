@@ -10,8 +10,12 @@ android {
         applicationId "app.fishreadv2"
         minSdk 26
         targetSdk 34
-        versionCode 12
-        versionName "1.2.0"
+        versionCode 13
+        versionName "1.3.0-dev"
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     signingConfigs {
@@ -49,5 +53,7 @@ android {
 }
 
 dependencies {
-    // Pure Android SDK framework implementation (no external runtime dependencies required)
+    // Bundled Latin OCR model: recognition works offline from the first launch.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }
+
