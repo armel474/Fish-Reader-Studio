@@ -31,6 +31,11 @@ final class ScreenOcrScanner {
             callback.onFailure("La reconnaissance visuelle nécessite Android 11 ou une version plus récente.");
             return;
         }
+        captureApi30(callback);
+    }
+
+    @android.annotation.TargetApi(30)
+    private void captureApi30(FishAccessibilityService.CaptureCallback callback) {
         try {
             service.takeScreenshot(Display.DEFAULT_DISPLAY, service.getMainExecutor(),
                     new AccessibilityService.TakeScreenshotCallback() {
