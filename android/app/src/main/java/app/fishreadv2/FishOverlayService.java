@@ -82,6 +82,15 @@ public class FishOverlayService extends Service {
     private ValueAnimator scanAnimator;
     private ValueAnimator pulseAnimator;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ScanSession scanSession = new ScanSession();
+    private final ReadingSession readingSession = new ReadingSession();
+    private TextView voicePickerButton, speedPickerButton;
+    private int dockX, dockY;
+    private boolean selectionScrollRequested;
+    private String appliedTheme = "";
+    private String sourcePackage = "";
+    private Runnable pendingScrollScan;
+    private boolean destroyed;
 
     @Override
     public void onCreate() {
@@ -89,6 +98,17 @@ public class FishOverlayService extends Service {
         this.windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         this.voiceEngine = new FishVoiceEngine(this);
         this.voiceEngine.setListener(new FishVoiceEngine.PlaybackListener() {
+            @Override
+            public void onSentenceCompleted(String sentence) {
+                readingSession.sentenceCompleted(sentence);
+            }
+
+            @Override
+            public void onPlaybackError(String message) {
+                readingSession.pause();
+                Toast.makeText(FishOverlayService.this, message, Toast.LENGTH_LONG).show();
+            }
+
             @Override
             public void onStateChanged(boolean isPlaying, boolean isLoading, int currentSentenceIndex, int totalSentences, String currentSentence, String activeVoiceLabel, float speedMultiplier, int activeParagraphIndex) {
                 FishOverlayService.this.updateUiFromEngine(
@@ -103,6 +123,7 @@ public class FishOverlayService extends Service {
                 );
             }
         });
+        FishAccessibilityService.setScreenListener(this::onScreenChanged);
         startForegroundSafe();
         ensureOverlayAttached();
     }
@@ -119,10 +140,9 @@ public class FishOverlayService extends Service {
             if (ACTION_SPEAK_TEXT.equals(action)) {
                 String text = intent.getStringExtra(EXTRA_TEXT);
                 if (!TextUtils.isEmpty(text)) {
-                    this.currentBlocks.clear();
-                    this.activeParagraphIndex = -1;
-                    detachScreenCanvasOverlay();
+                    stopReadingAndResetToCircle();
                     switchUiState(UI_STATE_VERTICAL_PILL);
+                    readingSession.load("");
                     this.voiceEngine.speakText(text);
                 }
             }
@@ -188,15 +208,25 @@ public class FishOverlayService extends Service {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 windowType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT
         );
         this.floatingParams.gravity = Gravity.TOP | Gravity.START;
         DisplayMetrics dm = getResources().getDisplayMetrics();
         this.floatingParams.x = Math.max(0, dm.widthPixels - dp(56));
         this.floatingParams.y = dp(240);
+        dockX = floatingParams.x;
+        dockY = floatingParams.y;
 
         this.rootContainer = new FrameLayout(this);
+        this.rootContainer.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_OUTSIDE && currentUiState == UI_STATE_CONFIG_PANEL) {
+                collapseCommands();
+                return true;
+            }
+            return false;
+        });
         this.idleCircleView = buildIdleCircleView();
         this.verticalPillView = buildVerticalPillView();
         this.configPanelView = buildConfigPanelView();
@@ -228,7 +258,7 @@ public class FishOverlayService extends Service {
         }
 
         TextView icon = new TextView(this);
-        icon.setText("◉");
+        icon.setText("▶");
         icon.setTextColor(Color.parseColor("#6EE7B7"));
         icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20.0f);
         icon.setTypeface(Typeface.DEFAULT_BOLD);
@@ -286,11 +316,7 @@ public class FishOverlayService extends Service {
         attachDragAndClickListener(topCircle, new Runnable() {
             @Override
             public void run() {
-                if (FishOverlayService.this.voiceEngine.getTotalSentences() > 0) {
-                    FishOverlayService.this.voiceEngine.togglePlayPause();
-                } else {
-                    FishOverlayService.this.onIdleCircleTapped();
-                }
+                FishOverlayService.this.onIdleCircleTapped();
             }
         });
 
@@ -321,234 +347,129 @@ public class FishOverlayService extends Service {
         return pill;
     }
 
+    private ReaderTheme currentTheme() {
+        return ReaderTheme.forId(getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getString("theme", "papier"));
+    }
+
     private View buildConfigPanelView() {
+        ReaderTheme palette = currentTheme();
+        appliedTheme = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getString("theme", "papier");
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(12);
-        panel.setPadding(pad, dp(10), pad, pad);
-        panel.setLayoutParams(new FrameLayout.LayoutParams(dp(278), ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.setPadding(dp(8), dp(6), dp(8), dp(6));
+        panel.setLayoutParams(new FrameLayout.LayoutParams(dp(264), ViewGroup.LayoutParams.WRAP_CONTENT));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.parseColor(palette.surface));
+        background.setCornerRadius(dp(16));
+        background.setStroke(dp(1), Color.parseColor(palette.rule));
+        panel.setBackground(background);
+        panel.setElevation(dp(8));
 
-        GradientDrawable panelBg = new GradientDrawable();
-        panelBg.setColor(Color.parseColor("#F4161513"));
-        panelBg.setCornerRadius(dp(18));
-        panelBg.setStroke(dp(1), Color.parseColor("#554BA37E"));
-        panel.setBackground(panelBg);
-        if (Build.VERSION.SDK_INT >= 21) {
-            panel.setElevation(dp(12));
-        }
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        statusHeaderTextView = new TextView(this);
+        statusHeaderTextView.setText("Document prêt");
+        statusHeaderTextView.setTextSize(12);
+        statusHeaderTextView.setTextColor(Color.parseColor(palette.ink));
+        statusHeaderTextView.setLayoutParams(new LinearLayout.LayoutParams(0, dp(40), 1));
+        statusHeaderTextView.setGravity(Gravity.CENTER_VERTICAL);
+        attachDragAndClickListener(statusHeaderTextView, null);
+        header.addView(statusHeaderTextView);
+        TextView close = compactButton("×", "Réduire les commandes", this::collapseCommands);
+        close.setLayoutParams(new LinearLayout.LayoutParams(dp(44), dp(44)));
+        header.addView(close);
+        panel.addView(header);
 
-        LinearLayout headerRow = new LinearLayout(this);
-        headerRow.setOrientation(LinearLayout.HORIZONTAL);
-        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout transport = new LinearLayout(this);
+        transport.addView(compactButton("▤", "Choisir un autre paragraphe", this::showParagraphSelection));
+        transport.addView(compactButton("⏮", "Phrase précédente", () -> voiceEngine.previousSentence()));
+        playPauseConfigBtn = compactButton("▶", "Lire ou mettre en pause", this::togglePlayback);
+        transport.addView(playPauseConfigBtn);
+        transport.addView(compactButton("⏭", "Phrase suivante", () -> voiceEngine.nextSentence()));
+        transport.addView(compactButton("■", "Arrêter la lecture", this::stopPlaybackKeepDocument));
+        panel.addView(transport);
 
-        this.statusHeaderTextView = new TextView(this);
-        this.statusHeaderTextView.setText("Lecture en cours");
-        this.statusHeaderTextView.setTextColor(Color.parseColor("#6EE7B7"));
-        this.statusHeaderTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.0f);
-        this.statusHeaderTextView.setTypeface(Typeface.DEFAULT_BOLD);
-        this.statusHeaderTextView.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f));
-
-        TextView collapseBtn = createMiniChipButton("⎯ Pilule", "#29FFFFFF", "#F5F2EB");
-        collapseBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (FishOverlayService.this.voiceEngine.getTotalSentences() > 0) {
-                    FishOverlayService.this.switchUiState(UI_STATE_VERTICAL_PILL);
-                } else {
-                    FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
-                }
+        LinearLayout options = new LinearLayout(this);
+        voicePickerButton = compactButton("Voix ▾", "Choisir la voix", () -> {
+            android.widget.PopupMenu menu = new android.widget.PopupMenu(this, voicePickerButton);
+            for (int i = 0; i < FishVoiceEngine.VOICES.length; i++) {
+                menu.getMenu().add(0, i, i, FishVoiceEngine.VOICES[i].label);
             }
-        });
-
-        TextView stopBtn = createMiniChipButton("⏹ Stop", "#3DDF4B4B", "#FCA5A5");
-        LinearLayout.LayoutParams stopLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        stopLp.leftMargin = dp(6);
-        stopBtn.setLayoutParams(stopLp);
-        stopBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FishOverlayService.this.stopReadingAndResetToCircle();
-            }
-        });
-
-        headerRow.addView(this.statusHeaderTextView);
-        headerRow.addView(collapseBtn);
-        headerRow.addView(stopBtn);
-        panel.addView(headerRow);
-        attachDragAndClickListener(this.statusHeaderTextView, null);
-
-        LinearLayout transportRow = new LinearLayout(this);
-        transportRow.setOrientation(LinearLayout.HORIZONTAL);
-        transportRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams transLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        transLp.topMargin = dp(9);
-        transportRow.setLayoutParams(transLp);
-
-        TextView prevBtn = createFlexButton("⏮ -1 phr.", "#24FFFFFF", "#E7E2D8");
-        prevBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FishOverlayService.this.voiceEngine.previousSentence();
-            }
-        });
-
-        this.playPauseConfigBtn = createFlexButton("⏸ Pause", "#1E4D3B", "#FFFFFF");
-        LinearLayout.LayoutParams ppLp = (LinearLayout.LayoutParams) this.playPauseConfigBtn.getLayoutParams();
-        ppLp.leftMargin = dp(5);
-        ppLp.rightMargin = dp(5);
-        this.playPauseConfigBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (FishOverlayService.this.voiceEngine.getTotalSentences() > 0) {
-                    FishOverlayService.this.voiceEngine.togglePlayPause();
-                } else {
-                    FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
-                    FishOverlayService.this.onIdleCircleTapped();
-                }
-            }
-        });
-
-        TextView nextBtn = createFlexButton("⏭ +1 phr.", "#24FFFFFF", "#E7E2D8");
-        nextBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FishOverlayService.this.voiceEngine.nextSentence();
-            }
-        });
-
-        transportRow.addView(prevBtn);
-        transportRow.addView(this.playPauseConfigBtn);
-        transportRow.addView(nextBtn);
-        panel.addView(transportRow);
-
-        TextView voiceHeader = new TextView(this);
-        voiceHeader.setText("VOIX NATURELLE");
-        voiceHeader.setTextColor(Color.parseColor("#9CA3AF"));
-        voiceHeader.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
-        voiceHeader.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams vhLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        vhLp.topMargin = dp(9);
-        voiceHeader.setLayoutParams(vhLp);
-        panel.addView(voiceHeader);
-
-        LinearLayout voiceRow = new LinearLayout(this);
-        voiceRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams vrLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        vrLp.topMargin = dp(4);
-        voiceRow.setLayoutParams(vrLp);
-
-        this.voiceButtons.clear();
-        String[] shortNames = new String[]{"1/4 Clara", "2/4 Thomas", "3/4 Nicolas", "4/4 Emma"};
-        for (int i = 0; i < FishVoiceEngine.VOICES.length; i++) {
-            final FishVoiceEngine.VoiceSpec spec = FishVoiceEngine.VOICES[i];
-            TextView vBtn = createFlexButton(shortNames[i], "#22FFFFFF", "#D1D5DB");
-            vBtn.setTag(spec.id);
-            LinearLayout.LayoutParams vLp = (LinearLayout.LayoutParams) vBtn.getLayoutParams();
-            if (i > 0) {
-                vLp.leftMargin = dp(4);
-            }
-            vBtn.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    FishOverlayService.this.voiceEngine.setSelectedVoiceById(spec.id);
-                }
+            menu.setOnMenuItemClickListener(item -> {
+                voiceEngine.setSelectedVoiceById(FishVoiceEngine.VOICES[item.getItemId()].id);
+                refreshCompactPickers();
+                return true;
             });
-            this.voiceButtons.add(vBtn);
-            voiceRow.addView(vBtn);
-        }
-        panel.addView(voiceRow);
-
-        this.wpmLabelView = new TextView(this);
-        this.wpmLabelView.setText("DÉBIT WPM : 175 mots/min (1×)");
-        this.wpmLabelView.setTextColor(Color.parseColor("#9CA3AF"));
-        this.wpmLabelView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
-        this.wpmLabelView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        LinearLayout.LayoutParams wpmLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        wpmLp.topMargin = dp(8);
-        this.wpmLabelView.setLayoutParams(wpmLp);
-        panel.addView(this.wpmLabelView);
-
-        LinearLayout speedRow = new LinearLayout(this);
-        speedRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams srLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        srLp.topMargin = dp(4);
-        speedRow.setLayoutParams(srLp);
-
-        this.speedButtons.clear();
-        float[] speeds = new float[]{0.85f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
-        String[] speedLabels = new String[]{"0.85×", "1×", "1.25×", "1.5×", "1.75×", "2×"};
-        for (int i = 0; i < speeds.length; i++) {
-            final float mult = speeds[i];
-            TextView sBtn = createFlexButton(speedLabels[i], "#22FFFFFF", "#D1D5DB");
-            sBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
-            sBtn.setPadding(dp(2), dp(6), dp(2), dp(6));
-            sBtn.setTag(mult);
-            LinearLayout.LayoutParams sLp = (LinearLayout.LayoutParams) sBtn.getLayoutParams();
-            if (i > 0) {
-                sLp.leftMargin = dp(3);
-            }
-            sBtn.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    FishOverlayService.this.voiceEngine.setSpeedMultiplier(mult);
-                }
+            menu.show();
+        });
+        speedPickerButton = compactButton("1× ▾", "Choisir la vitesse", () -> {
+            final float[] values = {0.85f, 1f, 1.25f, 1.5f, 1.75f, 2f};
+            android.widget.PopupMenu menu = new android.widget.PopupMenu(this, speedPickerButton);
+            for (int i = 0; i < values.length; i++) menu.getMenu().add(0, i, i, speedLabel(values[i]));
+            menu.setOnMenuItemClickListener(item -> {
+                voiceEngine.setSpeedMultiplier(values[item.getItemId()]);
+                refreshCompactPickers();
+                return true;
             });
-            this.speedButtons.add(sBtn);
-            speedRow.addView(sBtn);
-        }
-        panel.addView(speedRow);
-
-        LinearLayout actionRow = new LinearLayout(this);
-        actionRow.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams arLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        arLp.topMargin = dp(10);
-        actionRow.setLayoutParams(arLp);
-
-        TextView rescanBtn = createFlexButton("🔍 Scanner l’écran", "#264BA37E", "#6EE7B7");
-        rescanBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FishOverlayService.this.voiceEngine.pause();
-                FishOverlayService.this.onIdleCircleTapped();
-            }
+            menu.show();
         });
-
-        TextView clipBtn = createFlexButton("📋 Texte copié", "#24FFFFFF", "#F5F2EB");
-        ((LinearLayout.LayoutParams) clipBtn.getLayoutParams()).leftMargin = dp(6);
-        clipBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                FishOverlayService.this.readCopiedOrSelectedTextWithFocus();
-            }
-        });
-
-        actionRow.addView(rescanBtn);
-        actionRow.addView(clipBtn);
-        panel.addView(actionRow);
-
-        refreshVoiceAndSpeedButtons(this.voiceEngine.getSelectedVoice().id, this.voiceEngine.getSpeedMultiplier());
+        options.addView(voicePickerButton);
+        options.addView(speedPickerButton);
+        panel.addView(options);
+        LinearLayout actions = new LinearLayout(this);
+        actions.addView(compactButton("Nouveau scan", "Scanner un nouveau document", () -> beginScreenScan(false)));
+        actions.addView(compactButton("Texte copié", "Lire le texte copié", this::readCopiedOrSelectedTextWithFocus));
+        panel.addView(actions);
+        refreshCompactPickers();
         return panel;
+    }
+
+    private TextView compactButton(String text, String description, Runnable action) {
+        TextView button = createFlexButton(text, currentTheme().paper, currentTheme().ink);
+        button.setContentDescription(description);
+        button.setMinHeight(dp(44));
+        button.setLayoutParams(new LinearLayout.LayoutParams(0, dp(44), 1));
+        button.setOnClickListener(view -> action.run());
+        return button;
+    }
+
+    private String speedLabel(float speed) {
+        return String.format(Locale.ROOT, "%.2f", speed).replaceAll("0+$", "").replaceAll("\\.$", "")
+                .replace('.', ',') + "×";
+    }
+
+    private void refreshCompactPickers() {
+        if (voicePickerButton != null) {
+            String id = voiceEngine.getSelectedVoice().id;
+            String name = id.substring(id.lastIndexOf('-') + 1);
+            voicePickerButton.setText(name.substring(0, 1).toUpperCase(Locale.ROOT) + name.substring(1) + " ▾");
+        }
+        if (speedPickerButton != null) speedPickerButton.setText(speedLabel(voiceEngine.getSpeedMultiplier()) + " ▾");
+    }
+
+    private void collapseCommands() {
+        switchUiState(readingSession.hasDocument() ? UI_STATE_VERTICAL_PILL : UI_STATE_IDLE_CIRCLE);
+    }
+
+    private void togglePlayback() {
+        cancelCapture();
+        if (voiceEngine.isPlaying()) {
+            readingSession.pause();
+            voiceEngine.pause();
+        } else if (voiceEngine.getTotalSentences() > 0) {
+            readingSession.play();
+            voiceEngine.resume();
+        } else if (!currentBlocks.isEmpty()) startReadingFromParagraph(0);
+        else beginScreenScan(false);
+    }
+
+    private void showParagraphSelection() {
+        cancelCapture();
+        if (currentBlocks.isEmpty()) { beginScreenScan(false); return; }
+        readingSession.pause();
+        voiceEngine.pause();
+        switchUiState(UI_STATE_SCAN_SELECT);
+        attachInteractiveScanCanvas();
     }
 
     private TextView createMiniChipButton(String text, String bgHex, String fgHex) {
@@ -582,73 +503,174 @@ public class FishOverlayService extends Service {
     }
 
     private void switchUiState(int state) {
-        this.currentUiState = state;
-        if (this.idleCircleView == null || this.verticalPillView == null || this.configPanelView == null) {
-            return;
+        String theme = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getString("theme", "papier");
+        if (state == UI_STATE_CONFIG_PANEL && rootContainer != null && configPanelView != null && !theme.equals(appliedTheme)) {
+            rootContainer.removeView(configPanelView);
+            configPanelView = buildConfigPanelView();
+            rootContainer.addView(configPanelView);
         }
-        this.idleCircleView.setVisibility(state == UI_STATE_IDLE_CIRCLE ? View.VISIBLE : View.GONE);
-        this.verticalPillView.setVisibility(state == UI_STATE_VERTICAL_PILL ? View.VISIBLE : View.GONE);
-        this.configPanelView.setVisibility(state == UI_STATE_CONFIG_PANEL ? View.VISIBLE : View.GONE);
+        currentUiState = state;
+        if (idleCircleView == null || verticalPillView == null || configPanelView == null) return;
+        idleCircleView.setVisibility(state == UI_STATE_IDLE_CIRCLE || state == UI_STATE_SCAN_SELECT ? View.VISIBLE : View.GONE);
+        verticalPillView.setVisibility(state == UI_STATE_VERTICAL_PILL ? View.VISIBLE : View.GONE);
+        configPanelView.setVisibility(state == UI_STATE_CONFIG_PANEL ? View.VISIBLE : View.GONE);
+        if (screenCanvasView != null) screenCanvasView.setVisibility(state == UI_STATE_CONFIG_PANEL ? View.INVISIBLE : View.VISIBLE);
+        positionFloatingWindow();
+    }
 
-        if (this.rootContainer != null && this.floatingParams != null) {
-            DisplayMetrics dm = getResources().getDisplayMetrics();
-            if (state == UI_STATE_IDLE_CIRCLE || state == UI_STATE_VERTICAL_PILL) {
-                int rightEdge = Math.max(0, dm.widthPixels - dp(54));
-                if (this.floatingParams.x > dm.widthPixels / 3) {
-                    this.floatingParams.x = rightEdge;
-                } else {
-                    this.floatingParams.x = dp(6);
-                }
-            } else if (state == UI_STATE_CONFIG_PANEL) {
-                this.floatingParams.x = Math.max(dp(8), Math.min(this.floatingParams.x, dm.widthPixels - dp(286)));
-            }
-            try {
-                this.windowManager.updateViewLayout(this.rootContainer, this.floatingParams);
-            } catch (Throwable ignored) {
-            }
-        }
+    private void positionFloatingWindow() {
+        if (rootContainer == null || floatingParams == null) return;
+        rootContainer.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int width = rootContainer.getMeasuredWidth(), height = rootContainer.getMeasuredHeight();
+        floatingParams.x = Math.max(dp(6), Math.min(dockX, dm.widthPixels - width - dp(6)));
+        floatingParams.y = Math.max(dp(32), Math.min(dockY, dm.heightPixels - height - dp(32)));
+        try { windowManager.updateViewLayout(rootContainer, floatingParams); }
+        catch (RuntimeException ignored) {}
     }
 
     private void onIdleCircleTapped() {
-        if (FishAccessibilityService.getInstance() == null) {
-            Toast.makeText(
-                    this,
-                    "Activez « Fish Reader » dans Accessibilité pour scanner l’écran.",
-                    Toast.LENGTH_LONG
-            ).show();
-            Intent openApp = new Intent(this, MainActivity.class);
-            openApp.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(openApp);
+        FishAccessibilityService svc = FishAccessibilityService.getInstance();
+        if (readingSession.hasScreenSource() && (svc == null || !readingSession.matches(svc.getDocumentScope()))) {
+            stopReadingAndResetToCircle();
+        }
+        if (readingSession.hasDocument()) {
+            cancelCapture();
+            switchUiState(UI_STATE_CONFIG_PANEL);
+            refreshCompactPickers();
+        } else beginScreenScan(false);
+    }
+
+    private void cancelCapture() {
+        selectionScrollRequested = false;
+        scanSession.cancel();
+        if (pendingScrollScan != null) mainHandler.removeCallbacks(pendingScrollScan);
+        pendingScrollScan = null;
+        if (rootContainer != null) rootContainer.setVisibility(View.VISIBLE);
+    }
+
+    private void beginScreenScan(boolean continuation) {
+        FishAccessibilityService svc = FishAccessibilityService.getInstance();
+        if (svc == null) { showScanFailure("Activez FishReader dans Accessibilité pour scanner."); return; }
+        final String expectedScope = svc.getDocumentScope();
+        if (getPackageName().equals(svc.getForegroundPackage()) || svc.getForegroundPackage().isEmpty()) {
+            showScanFailure("Ouvrez le document à lire dans une autre application avant de scanner.");
             return;
         }
+        boolean enabled = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getBoolean("scan_after_scroll", false);
+        if (continuation && !readingSession.follows(expectedScope, enabled)) return;
+        if (!continuation) stopReadingAndResetToCircle();
+        else { cancelCapture(); voiceEngine.pause(); detachScreenCanvasOverlay(); }
+        sourcePackage = svc.getForegroundPackage();
+        final String expectedPackage = sourcePackage;
+        final long token = scanSession.begin();
         switchUiState(UI_STATE_SCAN_SELECT);
-        attachInteractiveScanCanvas();
-        this.mainHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                FishAccessibilityService svc = FishAccessibilityService.getInstance();
-                List<FishAccessibilityService.ScreenBlock> blocks = svc != null
-                        ? svc.captureStructuredScreenBlocks()
-                        : new ArrayList<FishAccessibilityService.ScreenBlock>();
-                if (blocks.isEmpty()) {
-                    blocks = FishAccessibilityService.getLastCapturedBlocks();
+        if (rootContainer != null) rootContainer.setVisibility(View.GONE);
+        if (!continuation) Toast.makeText(this, "Analyse du texte à l’écran…", Toast.LENGTH_SHORT).show();
+        mainHandler.postDelayed(() -> {
+            if (destroyed || !scanSession.isCurrent(token)) return;
+            svc.captureScreen(new FishAccessibilityService.CaptureCallback() {
+                @Override
+                public void onCaptured(List<FishAccessibilityService.ScreenBlock> blocks) {
+                    mainHandler.post(() -> {
+                        if (destroyed || !scanSession.complete(token)) return;
+                        if (rootContainer != null) rootContainer.setVisibility(View.VISIBLE);
+                        if ((!expectedScope.isEmpty() && !expectedScope.equals(svc.getDocumentScope()))
+                                || !expectedPackage.equals(svc.getForegroundPackage())) {
+                            showScanFailure("Le document a changé. Relancez le scan sur le texte souhaité."); return;
+                        }
+                        if (blocks.isEmpty()) { showScanFailure("Aucun texte lisible détecté."); return; }
+                        List<FishAccessibilityService.ScreenBlock> selectedBlocks = blocks;
+                        if (continuation) {
+                            boolean follow = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getBoolean("scan_after_scroll", false);
+                            if (!readingSession.follows(expectedScope, follow)) { collapseCommands(); return; }
+                            selectedBlocks = unreadBlocks(blocks);
+                        } else readingSession.load(expectedScope);
+                        currentBlocks = new ArrayList<>(selectedBlocks);
+                        activeParagraphIndex = -1;
+                        if (continuation) {
+                            if (currentBlocks.isEmpty()) { collapseCommands(); return; }
+                            attachInteractiveScanCanvas();
+                            playBlocksFromParagraph(0);
+                        } else {
+                            switchUiState(UI_STATE_SCAN_SELECT);
+                            attachInteractiveScanCanvas();
+                        }
+                        if (!screenCanvasAttached) showScanFailure("Vérifiez l’autorisation de superposition.");
+                    });
                 }
-                if (blocks.isEmpty()) {
-                    FishOverlayService.this.detachScreenCanvasOverlay();
-                    FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
-                    Toast.makeText(
-                            FishOverlayService.this,
-                            "Aucun paragraphe détecté sur cet écran. Faites défiler le post puis réessayez.",
-                            Toast.LENGTH_SHORT
-                    ).show();
-                } else {
-                    FishOverlayService.this.currentBlocks = blocks;
-                    if (FishOverlayService.this.screenCanvasView != null) {
-                        FishOverlayService.this.screenCanvasView.invalidate();
-                    }
+                @Override public void onFailure(String message) {
+                    mainHandler.post(() -> {
+                        if (!destroyed && scanSession.complete(token)) showScanFailure(message);
+                    });
                 }
-            }
-        }, 120L);
+            });
+        }, 180L);
+        mainHandler.postDelayed(() -> {
+            if (!destroyed && scanSession.complete(token)) showScanFailure("Le scan a pris trop de temps. Réessayez.");
+        }, 10000L);
+    }
+
+    private List<FishAccessibilityService.ScreenBlock> unreadBlocks(List<FishAccessibilityService.ScreenBlock> blocks) {
+        List<String> flat = new ArrayList<>();
+        for (FishAccessibilityService.ScreenBlock block : blocks) flat.addAll(block.sentences);
+        int skip = readingSession.firstUnread(flat);
+        List<FishAccessibilityService.ScreenBlock> result = new ArrayList<>();
+        for (FishAccessibilityService.ScreenBlock block : blocks) {
+            int count = block.sentences.size();
+            if (skip >= count) { skip -= count; continue; }
+            List<String> sentences = new ArrayList<>(block.sentences.subList(skip, count));
+            skip = 0;
+            result.add(new FishAccessibilityService.ScreenBlock(block.text, block.bounds, sentences));
+        }
+        return result;
+    }
+
+    private void showScanFailure(String message) {
+        cancelCapture();
+        readingSession.pause();
+        voiceEngine.pause();
+        detachScreenCanvasOverlay();
+        collapseCommands();
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void onScreenChanged(String packageName, boolean scrolled) {
+        FishAccessibilityService svc = FishAccessibilityService.getInstance();
+        if (destroyed || svc == null) return;
+        String foreground = svc.getForegroundPackage();
+        String scope = svc.getDocumentScope();
+        if (readingSession.hasScreenSource() && !scope.isEmpty() && !readingSession.matches(scope)
+                || getPackageName().equals(foreground) && readingSession.hasScreenSource()
+                || !sourcePackage.isEmpty() && !foreground.isEmpty() && !sourcePackage.equals(foreground)) {
+            stopReadingAndResetToCircle(); return;
+        }
+        if (!scrolled || !foreground.equals(packageName)) return;
+        if (selectionScrollRequested) { scheduleSelectionRefresh(); return; }
+        // Old coordinates become invalid even while paused, but a pause must never arm a capture.
+        detachScreenCanvasOverlay();
+        currentBlocks.clear();
+        activeParagraphIndex = -1;
+        boolean enabled = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getBoolean("scan_after_scroll", false);
+        if (!readingSession.follows(scope, enabled)) {
+            cancelCapture(); readingSession.pause(); voiceEngine.stopAndClear(); collapseCommands(); return;
+        }
+        cancelCapture();
+        voiceEngine.stopAndClear();
+        collapseCommands();
+        pendingScrollScan = () -> { pendingScrollScan = null; beginScreenScan(true); };
+        mainHandler.postDelayed(pendingScrollScan, 700L);
+    }
+
+    private void scheduleSelectionRefresh() {
+        if (pendingScrollScan != null) mainHandler.removeCallbacks(pendingScrollScan);
+        pendingScrollScan = () -> {
+            pendingScrollScan = null;
+            selectionScrollRequested = false;
+            beginScreenScan(false);
+        };
+        mainHandler.postDelayed(pendingScrollScan, 700L);
     }
 
     private void attachInteractiveScanCanvas() {
@@ -680,6 +702,7 @@ public class FishOverlayService extends Service {
 
     private void convertCanvasToPassThroughHighlight() {
         if (this.screenCanvasAttached && this.screenCanvasView != null && this.screenCanvasParams != null) {
+            this.screenCanvasParams.alpha = 0.6f;
             this.screenCanvasParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
@@ -739,17 +762,45 @@ public class FishOverlayService extends Service {
     }
 
     private void startReadingFromParagraph(int index) {
+        readingSession.chooseStart();
+        playBlocksFromParagraph(index);
+    }
+
+    private void playBlocksFromParagraph(int index) {
         if (this.currentBlocks == null || this.currentBlocks.isEmpty()) {
             return;
         }
         int safeIdx = Math.max(0, Math.min(index, this.currentBlocks.size() - 1));
         this.activeParagraphIndex = safeIdx;
+        readingSession.play();
         convertCanvasToPassThroughHighlight();
         switchUiState(UI_STATE_VERTICAL_PILL);
         this.voiceEngine.speakBlocksFromParagraph(this.currentBlocks, safeIdx);
     }
 
+    private void stopPlaybackKeepDocument() {
+        cancelCapture();
+        readingSession.pause();
+        voiceEngine.stopAndClear();
+        activeParagraphIndex = -1;
+        detachScreenCanvasOverlay();
+        collapseCommands();
+    }
+
     private void stopReadingAndResetToCircle() {
+        readingSession.clear();
+        sourcePackage = "";
+        scanSession.cancel();
+        if (pendingScrollScan != null) mainHandler.removeCallbacks(pendingScrollScan);
+        pendingScrollScan = null;
+        if (rootContainer != null) {
+            rootContainer.setVisibility(View.VISIBLE);
+            if (floatingParams != null) {
+                floatingParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                try { windowManager.updateViewLayout(rootContainer, floatingParams); }
+                catch (RuntimeException ignored) {}
+            }
+        }
         this.voiceEngine.stopAndClear();
         this.activeParagraphIndex = -1;
         this.currentBlocks.clear();
@@ -758,6 +809,8 @@ public class FishOverlayService extends Service {
     }
 
     private void readCopiedOrSelectedTextWithFocus() {
+        stopReadingAndResetToCircle();
+        final long token = scanSession.begin();
         if (this.rootContainer != null && this.floatingParams != null) {
             try {
                 this.floatingParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
@@ -768,6 +821,7 @@ public class FishOverlayService extends Service {
         this.mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
+                if (destroyed || !scanSession.complete(token)) return;
                 String text = FishOverlayService.this.extractClipboardTextNow();
                 if (FishOverlayService.this.rootContainer != null && FishOverlayService.this.floatingParams != null) {
                     try {
@@ -784,6 +838,7 @@ public class FishOverlayService extends Service {
                 }
                 if (!TextUtils.isEmpty(text)) {
                     FishAccessibilityService.setLastCopiedOrSelectedText(text);
+                    readingSession.load("");
                     FishOverlayService.this.currentBlocks.clear();
                     FishOverlayService.this.activeParagraphIndex = -1;
                     FishOverlayService.this.detachScreenCanvasOverlay();
@@ -821,7 +876,7 @@ public class FishOverlayService extends Service {
         if (totalSents == 0 && !isPlaying && this.currentUiState != UI_STATE_SCAN_SELECT) {
             this.activeParagraphIndex = -1;
             detachScreenCanvasOverlay();
-            if (this.currentUiState == UI_STATE_VERTICAL_PILL) {
+            if (this.currentUiState == UI_STATE_VERTICAL_PILL && !readingSession.hasDocument()) {
                 switchUiState(UI_STATE_IDLE_CIRCLE);
             }
         } else if (!this.currentBlocks.isEmpty() && paraIdx >= 0 && paraIdx < this.currentBlocks.size()) {
@@ -859,12 +914,13 @@ public class FishOverlayService extends Service {
                     );
                 }
             } else {
-                this.statusHeaderTextView.setText("Prêt à scanner l’écran");
+                this.statusHeaderTextView.setText(readingSession.hasDocument() ? "Document prêt · " + currentBlocks.size() + " blocs" : "Prêt à scanner");
             }
         }
 
         if (this.playPauseConfigBtn != null) {
-            this.playPauseConfigBtn.setText(isPlaying ? "⏸ Pause" : "▶ Lire");
+            this.playPauseConfigBtn.setText(isPlaying ? "Ⅱ" : "▶");
+            this.playPauseConfigBtn.setContentDescription(isPlaying ? "Mettre en pause" : "Lire");
         }
 
         int wpm = Math.round(175.0f * speedMult);
@@ -875,7 +931,7 @@ public class FishOverlayService extends Service {
             this.wpmLabelView.setText("DÉBIT WPM : " + wpm + " mots/min (" + formattedSpeed + "×)");
         }
 
-        refreshVoiceAndSpeedButtons(this.voiceEngine.getSelectedVoice().id, speedMult);
+        refreshCompactPickers();
     }
 
     private void refreshVoiceAndSpeedButtons(String activeVoiceId, float activeSpeed) {
@@ -980,13 +1036,8 @@ public class FishOverlayService extends Service {
                         } else {
                             FishOverlayService.this.floatingParams.x = FishOverlayService.this.dp(6);
                         }
-                        try {
-                            FishOverlayService.this.windowManager.updateViewLayout(
-                                    FishOverlayService.this.rootContainer,
-                                    FishOverlayService.this.floatingParams
-                            );
-                        } catch (Throwable ignored) {
-                        }
+                        dockX = floatingParams.x; dockY = floatingParams.y;
+                        positionFloatingWindow();
                         return true;
 
                     case MotionEvent.ACTION_MOVE:
@@ -1000,6 +1051,9 @@ public class FishOverlayService extends Service {
                         }
                         FishOverlayService.this.floatingParams.x = this.initialX + dx;
                         FishOverlayService.this.floatingParams.y = this.initialY + dy;
+                        if (currentUiState == UI_STATE_IDLE_CIRCLE || currentUiState == UI_STATE_VERTICAL_PILL) {
+                            dockX = floatingParams.x; dockY = floatingParams.y;
+                        }
                         try {
                             FishOverlayService.this.windowManager.updateViewLayout(
                                     FishOverlayService.this.rootContainer,
@@ -1017,6 +1071,8 @@ public class FishOverlayService extends Service {
     }
 
     private class ScreenCanvasOverlayView extends View {
+        private float gestureStartY;
+        private boolean swiped;
         private final Paint scrimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint frameFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint frameStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -1068,6 +1124,14 @@ public class FishOverlayService extends Service {
             this.scanLinePaint.setColor(Color.parseColor("#996EE7B7"));
         }
 
+        private Rect localBounds(Rect screenBounds) {
+            int[] location = new int[2];
+            getLocationOnScreen(location);
+            Rect bounds = new Rect(screenBounds);
+            bounds.offset(-location[0], -location[1]);
+            return bounds;
+        }
+
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
@@ -1093,11 +1157,12 @@ public class FishOverlayService extends Service {
                     FishAccessibilityService.ScreenBlock active = FishOverlayService.this.currentBlocks.get(
                             FishOverlayService.this.activeParagraphIndex
                     );
+                    Rect activeBounds = localBounds(active.bounds);
                     RectF rect = new RectF(
-                            Math.max(FishOverlayService.this.dp(4), active.bounds.left - FishOverlayService.this.dp(5)),
-                            Math.max(FishOverlayService.this.dp(36), active.bounds.top - FishOverlayService.this.dp(4)),
-                            Math.min(width - FishOverlayService.this.dp(4), active.bounds.right + FishOverlayService.this.dp(5)),
-                            Math.min(height - FishOverlayService.this.dp(8), active.bounds.bottom + FishOverlayService.this.dp(4))
+                            Math.max(FishOverlayService.this.dp(4), activeBounds.left - FishOverlayService.this.dp(5)),
+                            Math.max(FishOverlayService.this.dp(36), activeBounds.top - FishOverlayService.this.dp(4)),
+                            Math.min(width - FishOverlayService.this.dp(4), activeBounds.right + FishOverlayService.this.dp(5)),
+                            Math.min(height - FishOverlayService.this.dp(8), activeBounds.bottom + FishOverlayService.this.dp(4))
                     );
                     canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.activeFillPaint);
                     canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.activeStrokePaint);
@@ -1109,11 +1174,12 @@ public class FishOverlayService extends Service {
 
             for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
                 FishAccessibilityService.ScreenBlock block = FishOverlayService.this.currentBlocks.get(i);
+                Rect blockBounds = localBounds(block.bounds);
                 RectF rect = new RectF(
-                        Math.max(FishOverlayService.this.dp(6), block.bounds.left - FishOverlayService.this.dp(4)),
-                        Math.max(FishOverlayService.this.dp(76), block.bounds.top - FishOverlayService.this.dp(3)),
-                        Math.min(width - FishOverlayService.this.dp(6), block.bounds.right + FishOverlayService.this.dp(4)),
-                        Math.min(height - FishOverlayService.this.dp(12), block.bounds.bottom + FishOverlayService.this.dp(3))
+                        Math.max(FishOverlayService.this.dp(6), blockBounds.left - FishOverlayService.this.dp(4)),
+                        Math.max(FishOverlayService.this.dp(76), blockBounds.top - FishOverlayService.this.dp(3)),
+                        Math.min(width - FishOverlayService.this.dp(6), blockBounds.right + FishOverlayService.this.dp(4)),
+                        Math.min(height - FishOverlayService.this.dp(12), blockBounds.bottom + FishOverlayService.this.dp(3))
                 );
                 canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.frameFillPaint);
                 canvas.drawRoundRect(rect, FishOverlayService.this.dp(10), FishOverlayService.this.dp(10), this.frameStrokePaint);
@@ -1179,15 +1245,32 @@ public class FishOverlayService extends Service {
             if (FishOverlayService.this.currentUiState != UI_STATE_SCAN_SELECT) {
                 return false;
             }
-            if (event.getActionMasked() != MotionEvent.ACTION_UP) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                gestureStartY = event.getRawY(); swiped = false; return true;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_MOVE && !swiped
+                    && Math.abs(event.getRawY() - gestureStartY) > dp(36)) {
+                swiped = true;
+                FishAccessibilityService svc = FishAccessibilityService.getInstance();
+                detachScreenCanvasOverlay();
+                selectionScrollRequested = true;
+                if (svc != null && svc.scrollContent(event.getRawY() < gestureStartY)) {
+                    scheduleSelectionRefresh();
+                } else {
+                    selectionScrollRequested = false;
+                    collapseCommands();
+                    Toast.makeText(FishOverlayService.this, "Défilez dans le document puis utilisez Nouveau scan.", Toast.LENGTH_SHORT).show();
+                }
                 return true;
             }
+            if (event.getActionMasked() != MotionEvent.ACTION_UP || swiped) return true;
             float x = event.getX();
             float y = event.getY();
 
             if (this.closeScanBtnRect.contains(x, y)) {
-                FishOverlayService.this.detachScreenCanvasOverlay();
-                FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
+                readingSession.pause();
+                detachScreenCanvasOverlay();
+                collapseCommands();
                 return true;
             }
             if (this.readAllBtnRect.contains(x, y)) {
@@ -1195,35 +1278,21 @@ public class FishOverlayService extends Service {
                 return true;
             }
 
+            // Hit-test in screen coordinates, matching accessibility and OCR rectangles.
+            int selected = -1;
+            long smallestArea = Long.MAX_VALUE;
             for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
-                Rect b = FishOverlayService.this.currentBlocks.get(i).bounds;
-                if (x >= b.left - FishOverlayService.this.dp(12)
-                        && x <= b.right + FishOverlayService.this.dp(12)
-                        && y >= b.top - FishOverlayService.this.dp(10)
-                        && y <= b.bottom + FishOverlayService.this.dp(10)) {
-                    FishOverlayService.this.startReadingFromParagraph(i);
-                    return true;
+                Rect bounds = FishOverlayService.this.currentBlocks.get(i).bounds;
+                long area = (long) bounds.width() * bounds.height();
+                if (bounds.contains((int) event.getRawX(), (int) event.getRawY()) && area < smallestArea) {
+                    smallestArea = area;
+                    selected = i;
                 }
             }
-
-            if (!FishOverlayService.this.currentBlocks.isEmpty()) {
-                float bestDist = Float.MAX_VALUE;
-                int bestIdx = 0;
-                for (int i = 0; i < FishOverlayService.this.currentBlocks.size(); i++) {
-                    float dist = Math.abs(y - FishOverlayService.this.currentBlocks.get(i).bounds.exactCenterY());
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestIdx = i;
-                    }
-                }
-                if (bestDist < FishOverlayService.this.dp(90)) {
-                    FishOverlayService.this.startReadingFromParagraph(bestIdx);
-                    return true;
-                }
+            if (selected >= 0) {
+                FishOverlayService.this.startReadingFromParagraph(selected);
             }
-
-            FishOverlayService.this.detachScreenCanvasOverlay();
-            FishOverlayService.this.switchUiState(UI_STATE_IDLE_CIRCLE);
+            // Tapping blank space must never choose an arbitrary nearby paragraph.
             return true;
         }
     }
@@ -1237,7 +1306,17 @@ public class FishOverlayService extends Service {
     }
 
     @Override
+    public void onConfigurationChanged(android.content.res.Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        stopReadingAndResetToCircle();
+    }
+
+    @Override
     public void onDestroy() {
+        destroyed = true;
+        scanSession.cancel();
+        mainHandler.removeCallbacksAndMessages(null);
+        FishAccessibilityService.setScreenListener(null);
         if (this.pulseAnimator != null) {
             try {
                 this.pulseAnimator.cancel();
@@ -1258,3 +1337,5 @@ public class FishOverlayService extends Service {
         super.onDestroy();
     }
 }
+
+

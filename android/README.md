@@ -1,124 +1,99 @@
-# Fish Reader Android (`app.fishreadv2` — v1.2.0 / versionCode 12)
+# FishReader Android — 1.4.0-dev
 
-Ce dossier contient le projet Android complet (sources Java, `AndroidManifest.xml`, ressources XML et configuration Gradle) correspondant exactement au binaire `public/FishReader-v1.2.apk`.
+Application personnelle hors ligne, sans compte, dérivée des sources Java du
+projet `app.fishreadv2`. La branche de travail est
+`codex/android-scan-sessions-ocr` ; les APK 1.2 de `public/` ne sont pas remplacés.
 
-## Structure du projet
+## Utilisation
 
-```text
-android/
-├── app/
-│   ├── build.gradle
-│   ├── proguard-rules.pro
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── java/app/fishreadv2/
-│       │   ├── FishAccessibilityService.java
-│       │   ├── FishOverlayService.java
-│       │   ├── FishVoiceEngine.java
-│       │   └── MainActivity.java
-│       └── res/
-│           ├── drawable/ic_launcher.xml
-│           ├── values/strings.xml
-│           └── xml/accessibility_service_config.xml
-├── build.gradle
-├── gradle.properties
-├── settings.gradle
-├── gradlew
-├── gradlew.bat
-└── gradle/wrapper/
-    ├── gradle-wrapper.jar
-    └── gradle-wrapper.properties
-```
+- Sans document chargé, toucher la bulle lance un scan et propose les blocs.
+- Après un scan réussi, la bulle et la pilule ouvrent les commandes. Le panneau
+  propose lecture/pause, arrêt, sauts de phrase, sélection d'un autre bloc,
+  voix, vitesse, nouveau scan et texte copié. Toucher à l'extérieur le replie.
+- Pause suspend la lecture. Stop arrête l'audio et le suivi mais garde le
+  document disponible dans les commandes. Nouveau scan remplace le document.
+- Le panneau se place dans les limites de l'écran sans modifier l'ancrage
+  mémorisé de la petite bulle. Ses boutons ont une hauteur minimale de 44 dp.
+- Un geste vertical dans la sélection tente un défilement du contenu via
+  l'accessibilité, puis actualise les blocs. Si l'application ne propose pas
+  cette action, fermer la sélection, défiler puis relancer le scan.
 
-## Prérequis
+## Suivi du défilement
 
-- **JDK 17** (`JAVA_HOME` pointant vers une installation OpenJDK 17).
-- **Android SDK Platform 34** (`platforms;android-34`) et **Android SDK Build-Tools 34.0.0** (`build-tools;34.0.0`).
-- Variable d'environnement `ANDROID_HOME` (ou fichier `android/local.properties` contenant `sdk.dir=/chemin/vers/Android/Sdk`).
+L'option « Suivre mon défilement pendant une lecture » est désactivée par défaut.
+Elle n'arme jamais un scan global. Le suivi nécessite un scan manuel, le choix
+d'un point de départ et un lancement de lecture. Il est lié au paquet de
+l'application, à l'identifiant de fenêtre et au titre de fenêtre exposé par Android.
+Après stabilisation du défilement, le texte visible est recapturé et la lecture
+reprend sur les phrases qui ne font pas partie du chevauchement déjà entendu.
 
----
+Pause et Stop désarment le suivi. Un changement d'application ou de fenêtre ferme
+la session ; revenir n'entraîne pas de reprise automatique. Les fenêtres de menu
+propres à FishReader sont distinguées de son écran principal.
 
-## Option 1 : Compiler l'APK avec Gradle Wrapper (recommandé)
+**Limite à tester :** Android n'expose pas d'identifiant de document universel.
+Deux documents ouverts dans une même fenêtre avec un titre identique peuvent
+être indiscernables. Dans ce cas, utiliser Nouveau scan. Si aucune métadonnée de
+fenêtre n'est accessible, le scan OCR manuel reste possible mais le suivi n'est
+pas armé. Le rapprochement OCR est conservateur et peut relire une phrase dont
+la segmentation a changé ; il ne doit pas supprimer un passage incertain.
 
-Depuis la racine du dépôt :
+## Interface et traitement local
 
-```bash
+Accueil, Voix et Réglages sont accessibles séparément. Les thèmes Papier, Sépia
+et Nuit reprennent les jetons du design original et s'appliquent à l'application
+et aux commandes flottantes. Aucun compte ni service de synchronisation n'est
+ajouté. La permission INTERNET est explicitement retirée de l'APK, y compris
+lorsqu'une dépendance la déclare.
+
+L'extraction combine accessibilité et OCR ML Kit latin embarqué. Les champs de
+message et les petits contrôles identifiables sont exclus des candidats et des
+zones OCR. Les grands éditeurs de document ne sont pas exclus par leur seul
+caractère éditable. L'OCR nécessite Android 11+, et un écran protégé peut refuser
+la capture.
+
+La synthèse utilise encore les voix françaises Android installées, à leur hauteur
+naturelle. Les quatre profils ne garantissent pas quatre voix distinctes. Aucun
+nouveau moteur neuronal ni gestionnaire de téléchargement de voix n'est intégré.
+La pause reprend au début de la phrase courante. Le défilement automatique, la
+lecture multilingue et le changement de nom/logo définitif restent à traiter.
+
+## Compilation et vérification
+
+Prérequis : JDK 17, Android SDK Platform 34 et Build Tools 34.0.0.
+Configurer `ANDROID_HOME` ou `android/local.properties`.
+
+```sh
+sh android/tests/run.sh
 cd android
-
-# 1. Compiler un APK de debug (signé automatiquement avec la clé debug Android)
-./gradlew assembleDebug
-# Sortie : app/build/outputs/apk/debug/app-debug.apk
-
-# 2. Compiler un APK de release non signé
-./gradlew assembleRelease
-# Sortie : app/build/outputs/apk/release/app-release-unsigned.apk
+sh gradlew assembleDebug lintDebug --no-daemon
 ```
 
-### Compiler et signer l'APK Release via variables d'environnement (sans secret dans le dépôt)
+APK : `android/app/build/outputs/apk/debug/app-debug.apk`.
+Le premier build télécharge Gradle, le plugin Android et les dépendances ML Kit.
+Le workflow `.github/workflows/android-debug.yml` exécute les tests, compile,
+lance lint et vérifie l'absence de permission INTERNET avant de conserver l'APK
+comme artefact pendant sept jours. Il réutilise une clé de développement via le
+cache GitHub Actions ; une première installation signée autrement peut refuser
+la mise à jour. Ce mécanisme ne remplace pas une clé de signature de production.
 
-```bash
-cd android
-ANDROID_KEYSTORE_PATH="/chemin/vers/votre-keystore.jks" \
-ANDROID_KEYSTORE_PASSWORD="<mot_de_passe_keystore>" \
-ANDROID_KEY_ALIAS="<alias_cle>" \
-ANDROID_KEY_PASSWORD="<mot_de_passe_cle>" \
-./gradlew assembleRelease
-# Sortie : app/build/outputs/apk/release/app-release.apk
-```
+Les tests Java couvrent les résultats de scan obsolètes et le périmètre d'une
+session : aucun suivi au repos, pause respectée, changement de fenêtre/document,
+texte copié, chevauchement déjà lu et relecture intentionnelle. Ils ne remplacent
+pas les essais sur Galaxy S25 Ultra / Android 16.
 
----
+## Essais sur téléphone
 
-## Option 2 : Pipeline direct `aapt2` + `javac` + `d8` + `zipalign` + `apksigner`
-
-L'APK `FishReader-v1.2.apk` n'utilise aucune dépendance externe en dehors du SDK Android (`android.jar` API 34) et peut également être compilé directement avec les outils de ligne de commande du SDK Android (`build-tools/34.0.0` et `platforms/android-34`) :
-
-```bash
-cd android
-export BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
-export ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar"
-mkdir -p build/compiled_res build/gen build/classes build/dex build/out
-
-# 1. Compiler les ressources XML avec AAPT2
-"$BUILD_TOOLS/aapt2" compile --dir app/src/main/res -o build/compiled_res/res.zip
-
-# 2. Lier les ressources et générer R.java + APK de base
-"$BUILD_TOOLS/aapt2" link \
-  -o build/out/unsigned-unaligned.apk \
-  -I "$ANDROID_JAR" \
-  --manifest app/src/main/AndroidManifest.xml \
-  --java build/gen \
-  --min-sdk-version 26 \
-  --target-sdk-version 34 \
-  --version-code 12 \
-  --version-name 1.2.0 \
-  build/compiled_res/res.zip
-
-# 3. Compiler les sources Java + R.java en bytecode Java 8
-javac -source 1.8 -target 1.8 -encoding UTF-8 \
-  -bootclasspath "$ANDROID_JAR" \
-  -classpath "$ANDROID_JAR" \
-  -d build/classes \
-  build/gen/app/fishreadv2/R.java \
-  app/src/main/java/app/fishreadv2/FishAccessibilityService.java \
-  app/src/main/java/app/fishreadv2/FishVoiceEngine.java \
-  app/src/main/java/app/fishreadv2/FishOverlayService.java \
-  app/src/main/java/app/fishreadv2/MainActivity.java
-
-# 4. Convertir les classes .class en classes.dex avec D8
-"$BUILD_TOOLS/d8" --lib "$ANDROID_JAR" --min-api 26 \
-  --output build/dex \
-  build/classes/app/fishreadv2/*.class
-
-# 5. Injecter classes.dex dans l'APK et aligner sur 4 octets
-cp build/dex/classes.dex .
-zip -j build/out/unsigned-unaligned.apk classes.dex
-rm classes.dex
-"$BUILD_TOOLS/zipalign" -f -p 4 build/out/unsigned-unaligned.apk build/out/unsigned-aligned.apk
-
-# 6. Signer l'APK avec votre keystore personnel (v1 + v2 + v3)
-"$BUILD_TOOLS/apksigner" sign \
-  --ks "/chemin/vers/votre-keystore.jks" \
-  --ks-key-alias "<alias_cle>" \
-  --out build/out/FishReader-v1.2.apk \
-  build/out/unsigned-aligned.apk
-```
+1. Activer l'option de suivi, rester au repos puis défiler dans l'accueil et les
+   réglages : aucun scan spontané. Ouvrir FishReader : aucun autoscan de lui-même.
+2. Scanner un texte dans Meta AI, choisir un bloc et lire. Toucher la pilule :
+   commandes compactes, position de la bulle conservée, menus voix/vitesse utilisables.
+3. Toucher hors du panneau, puis rouvrir. Tester Pause et Stop : pas de scan ni
+   de reprise audio au défilement. Le document conserve ses commandes.
+4. Reprendre la lecture et défiler dans le même document : actualisation après
+   stabilisation, sans lecture du champ de saisie et avec réduction des répétitions.
+5. Changer d'application, ouvrir un autre PDF ou tourner le téléphone : vérifier
+   la fermeture de la session, y compris le cas de deux documents dans la même
+   fenêtre. Ne pas considérer ce dernier cas garanti sans ces essais.
+6. Tester le défilement dans les cadres de sélection, Word, les écrans protégés,
+   la capture annulée, les thèmes et le fonctionnement en mode avion.

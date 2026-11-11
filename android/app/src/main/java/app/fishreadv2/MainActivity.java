@@ -23,6 +23,7 @@ import android.widget.Toast;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
+    static boolean visible;
     private TextView overlayPermStatusView;
     private TextView accessibilityPermStatusView;
     private TextView launchOverlayBtn;
@@ -30,11 +31,16 @@ public class MainActivity extends Activity {
     private final TextView[] voiceCards = new TextView[FishVoiceEngine.VOICES.length];
     private FishVoiceEngine voiceEngine;
     private TextView wpmValueView;
+    private int selectedSection;
+    private ReaderTheme palette;
+    private String draftText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         this.voiceEngine = new FishVoiceEngine(this);
+        selectedSection = savedInstanceState == null ? 0 : savedInstanceState.getInt("section", 0);
+        draftText = savedInstanceState == null ? null : savedInstanceState.getString("draft");
         buildUi();
         handleIncomingShareOrProcessText(getIntent());
     }
@@ -47,14 +53,35 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+    }
+
+    @Override
+    protected void onStop() {
+        visible = false;
+        super.onStop();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         refreshPermissionsUi();
     }
 
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putInt("section", selectedSection);
+        if (quickTextEdit != null) outState.putString("draft", quickTextEdit.getText().toString());
+        super.onSaveInstanceState(outState);
+    }
+
     private void buildUi() {
+        if (quickTextEdit != null) draftText = quickTextEdit.getText().toString();
+        palette = ReaderTheme.forId(getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getString("theme", "papier"));
         ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.parseColor("#FAF6EE"));
+        scroll.setBackgroundColor(Color.parseColor(palette.paper));
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -63,15 +90,15 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView badge = new TextView(this);
-        badge.setText("FISH READER ANDROID · v2.4 PILULE VERTICALE & SCAN DIRECT");
-        badge.setTextColor(Color.parseColor("#1E4D3B"));
+        badge.setText("FISH READER ANDROID · " + BuildConfig.VERSION_NAME);
+        badge.setTextColor(Color.parseColor(palette.accent));
         badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.0f);
         badge.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         root.addView(badge);
 
         TextView title = new TextView(this);
-        title.setText("Lecteur Flottant Universel");
-        title.setTextColor(Color.parseColor("#181512"));
+        title.setText(new String[]{"FishReader", "Voix et vitesse", "Réglages"}[selectedSection]);
+        title.setTextColor(Color.parseColor(palette.ink));
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24.0f);
         title.setTypeface(Typeface.SERIF, Typeface.BOLD);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(
@@ -80,14 +107,27 @@ public class MainActivity extends Activity {
         );
         titleLp.topMargin = dp(4);
         root.addView(title, titleLp);
+        LinearLayout navigation = new LinearLayout(this);
+        String[] destinations = {"Accueil", "Voix", "Réglages"};
+        for (int i = 0; i < destinations.length; i++) {
+            final int destination = i;
+            TextView tab = createActionRowButton(destinations[i], i == selectedSection, view -> {
+                selectedSection = destination;
+                buildUi();
+            });
+            tab.setLayoutParams(new LinearLayout.LayoutParams(0, dp(48), 1));
+            tab.setGravity(Gravity.CENTER);
+            tab.setSelected(i == selectedSection);
+            navigation.addView(tab);
+        }
+        root.addView(navigation);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText(
-                "1. Petit rond discret au repos sur le bord de l’écran.\n" +
-                "2. Touchez le rond : scan rapide (450 ms) et cadres cliquables sur chaque paragraphe du post.\n" +
-                "3. Touchez un paragraphe : surbrillance directe sur l’écran et repli automatique en petite pilule verticale (◉ Pause + ⋯ Réglages)."
-        );
-        subtitle.setTextColor(Color.parseColor("#57524A"));
+        subtitle.setText(selectedSection == 0
+                ? "Votre lecteur personnel hors ligne. Ouvrez un document, scannez-le, puis choisissez un bloc à écouter. La bulle ouvre ensuite les commandes."
+                : selectedSection == 1 ? "Choisissez une voix française installée sur Android et réglez le débit. Aucun compte nécessaire."
+                : "Personnalisez la lecture, l’apparence et les autorisations. Les captures sont traitées sur le téléphone.");
+        subtitle.setTextColor(Color.parseColor(palette.muted));
         subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.0f);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -135,14 +175,56 @@ public class MainActivity extends Activity {
         );
         ((LinearLayout.LayoutParams) this.launchOverlayBtn.getLayoutParams()).topMargin = dp(10);
         permCard.addView(this.launchOverlayBtn);
+        overlayPermStatusView.setVisibility(selectedSection == 2 ? View.VISIBLE : View.GONE);
+        accessibilityPermStatusView.setVisibility(selectedSection == 2 ? View.VISIBLE : View.GONE);
+        launchOverlayBtn.setVisibility(selectedSection == 0 ? View.VISIBLE : View.GONE);
+        permCard.setVisibility(selectedSection == 1 ? View.GONE : View.VISIBLE);
         root.addView(permCard);
+
+        android.widget.Switch rescanSwitch = new android.widget.Switch(this);
+        rescanSwitch.setText("Suivre mon défilement pendant une lecture");
+        rescanSwitch.setTextColor(Color.parseColor(palette.ink));
+        rescanSwitch.setChecked(getSharedPreferences("fish_reader_prefs", MODE_PRIVATE)
+                .getBoolean("scan_after_scroll", false));
+        rescanSwitch.setOnCheckedChangeListener((button, checked) ->
+                getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).edit()
+                        .putBoolean("scan_after_scroll", checked).apply());
+        rescanSwitch.setVisibility(selectedSection == 2 ? View.VISIBLE : View.GONE);
+        root.addView(rescanSwitch);
+        TextView rescanHelp = new TextView(this);
+        rescanHelp.setText("Le suivi commence seulement après le choix d’un bloc et le lancement de sa lecture. Il reste dans la même fenêtre de document. Pause et Stop suspendent le suivi ; changer d’application ferme la session. Une autre fenêtre nécessite un nouveau scan.");
+        rescanHelp.setTextColor(Color.parseColor(palette.muted));
+        rescanHelp.setVisibility(selectedSection == 2 ? View.VISIBLE : View.GONE);
+        root.addView(rescanHelp);
+        if (selectedSection == 2) {
+            LinearLayout appearance = createCard();
+            TextView heading = new TextView(this);
+            heading.setText("Apparence"); heading.setTextColor(Color.parseColor(palette.ink));
+            heading.setTextSize(18); appearance.addView(heading);
+            String[] ids = {"papier", "sepia", "nuit"};
+            String[] labels = {"Papier", "Sépia", "Nuit"};
+            String current = getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).getString("theme", "papier");
+            for (int i = 0; i < ids.length; i++) {
+                final String theme = ids[i];
+                appearance.addView(createActionRowButton(labels[i], theme.equals(current), view -> {
+                    getSharedPreferences("fish_reader_prefs", MODE_PRIVATE).edit().putString("theme", theme).apply();
+                    buildUi();
+                }));
+            }
+            root.addView(appearance);
+            TextView privacy = new TextView(this);
+            privacy.setText("Sans compte · sans synchronisation · aucun envoi de capture ou de texte. Le raccourci d’accessibilité Android est facultatif ; la bulle FishReader suffit pour lire.");
+            privacy.setTextColor(Color.parseColor(palette.muted));
+            privacy.setPadding(0, dp(16), 0, dp(16));
+            root.addView(privacy);
+        }
 
         LinearLayout voiceCard = createCard();
         ((LinearLayout.LayoutParams) voiceCard.getLayoutParams()).topMargin = dp(14);
 
         TextView voiceTitle = new TextView(this);
-        voiceTitle.setText("4 Voix stockées (Constance verrouillée : Clara, Thomas, Nicolas, Emma)");
-        voiceTitle.setTextColor(Color.parseColor("#181512"));
+        voiceTitle.setText("Profils vocaux · voix françaises installées sur Android");
+        voiceTitle.setTextColor(Color.parseColor(palette.ink));
         voiceTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.0f);
         voiceTitle.setTypeface(Typeface.SERIF, Typeface.BOLD);
         voiceCard.addView(voiceTitle);
@@ -169,7 +251,7 @@ public class MainActivity extends Activity {
         }
 
         this.wpmValueView = new TextView(this);
-        this.wpmValueView.setTextColor(Color.parseColor("#1E4D3B"));
+        this.wpmValueView.setTextColor(Color.parseColor(palette.accent));
         this.wpmValueView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.0f);
         this.wpmValueView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         LinearLayout.LayoutParams wpmLp = new LinearLayout.LayoutParams(
@@ -197,9 +279,9 @@ public class MainActivity extends Activity {
             chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.0f);
             chip.setTypeface(Typeface.DEFAULT_BOLD);
             chip.setPadding(dp(4), dp(8), dp(4), dp(8));
-            chip.setTextColor(Color.parseColor("#181512"));
+            chip.setTextColor(Color.parseColor(palette.ink));
             GradientDrawable bg = new GradientDrawable();
-            bg.setColor(Color.parseColor("#EFE9DC"));
+            bg.setColor(Color.parseColor(palette.rule));
             bg.setCornerRadius(dp(8));
             chip.setBackground(bg);
             LinearLayout.LayoutParams chipLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
@@ -217,6 +299,7 @@ public class MainActivity extends Activity {
             speedRow.addView(chip);
         }
         voiceCard.addView(speedRow);
+        voiceCard.setVisibility(selectedSection == 1 ? View.VISIBLE : View.GONE);
         root.addView(voiceCard);
 
         LinearLayout testCard = createCard();
@@ -224,16 +307,17 @@ public class MainActivity extends Activity {
 
         TextView testTitle = new TextView(this);
         testTitle.setText("Tester une lecture rapide");
-        testTitle.setTextColor(Color.parseColor("#181512"));
+        testTitle.setTextColor(Color.parseColor(palette.ink));
         testTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.0f);
         testTitle.setTypeface(Typeface.SERIF, Typeface.BOLD);
         testCard.addView(testTitle);
 
         this.quickTextEdit = new EditText(this);
         this.quickTextEdit.setText(
-                "Peter Pan est un être mystique refusant de grandir qui enlève des enfants dans leur sommeil pour les emmener au Pays Imaginaire."
+                "Bienvenue dans FishReader. Choisissez un texte, prenez une pause et écoutez à votre rythme."
         );
-        this.quickTextEdit.setTextColor(Color.parseColor("#181512"));
+        if (draftText != null) this.quickTextEdit.setText(draftText);
+        this.quickTextEdit.setTextColor(Color.parseColor(palette.ink));
         this.quickTextEdit.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.0f);
         this.quickTextEdit.setMinLines(3);
         testCard.addView(this.quickTextEdit);
@@ -253,6 +337,7 @@ public class MainActivity extends Activity {
         );
         ((LinearLayout.LayoutParams) playSampleBtn.getLayoutParams()).topMargin = dp(8);
         testCard.addView(playSampleBtn);
+        testCard.setVisibility(selectedSection == 0 ? View.VISIBLE : View.GONE);
         root.addView(testCard);
 
         setContentView(scroll);
@@ -287,9 +372,9 @@ public class MainActivity extends Activity {
         int pad = dp(14);
         card.setPadding(pad, pad, pad, pad);
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#FFFCF5"));
+        bg.setColor(Color.parseColor(palette.surface));
         bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(1), Color.parseColor("#E2D8C6"));
+        bg.setStroke(dp(1), Color.parseColor(palette.rule));
         card.setBackground(bg);
         card.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -320,12 +405,12 @@ public class MainActivity extends Activity {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(10));
         if (primary) {
-            bg.setColor(Color.parseColor("#1E4D3B"));
-            btn.setTextColor(Color.parseColor("#FFFCF5"));
+            bg.setColor(Color.parseColor(palette.accent));
+            btn.setTextColor(Color.parseColor(palette.onAccent));
         } else {
-            bg.setColor(Color.parseColor("#F3EDE0"));
-            bg.setStroke(dp(1), Color.parseColor("#D6CBB8"));
-            btn.setTextColor(Color.parseColor("#181512"));
+            bg.setColor(Color.parseColor(palette.paper));
+            bg.setStroke(dp(1), Color.parseColor(palette.rule));
+            btn.setTextColor(Color.parseColor(palette.ink));
         }
         btn.setBackground(bg);
     }
@@ -488,3 +573,5 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
+
+
