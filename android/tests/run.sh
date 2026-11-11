@@ -5,5 +5,10 @@ test_output=$(mktemp -d)
 trap 'rm -rf "$test_output"' EXIT HUP INT TERM
 java com.sun.tools.javac.Main -d "$test_output" \
   "$project_root/app/src/main/java/app/fishreadv2/ScanSession.java" \
-  "$project_root/tests/ScanSessionTest.java"
+  "$project_root/tests/ScanSessionTest.java" \
+  "$project_root/app/src/main/java/app/fishreadv2/ReadingSession.java" \
+  "$project_root/tests/ReadingSessionTest.java"
 java -cp "$test_output" app.fishreadv2.ScanSessionTest
+
+
+java -cp "$test_output" app.fishreadv2.ReadingSessionTest

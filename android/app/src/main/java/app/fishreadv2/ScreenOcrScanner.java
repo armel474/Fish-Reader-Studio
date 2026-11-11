@@ -31,11 +31,12 @@ final class ScreenOcrScanner {
             callback.onFailure("La reconnaissance visuelle nécessite Android 11 ou une version plus récente.");
             return;
         }
-        captureApi30(callback);
+        List<Rect> excluded = ((FishAccessibilityService) service).getNonContentBounds();
+        captureApi30(callback, excluded);
     }
 
     @android.annotation.TargetApi(30)
-    private void captureApi30(FishAccessibilityService.CaptureCallback callback) {
+    private void captureApi30(FishAccessibilityService.CaptureCallback callback, List<Rect> excluded) {
         try {
             service.takeScreenshot(Display.DEFAULT_DISPLAY, service.getMainExecutor(),
                     new AccessibilityService.TakeScreenshotCallback() {
@@ -61,7 +62,7 @@ final class ScreenOcrScanner {
                         callback.onFailure("Impossible de préparer la capture de cet écran.");
                         return;
                     }
-                    recognize(image, callback);
+                    recognize(image, callback, excluded);
                 }
 
                 @Override
@@ -76,7 +77,7 @@ final class ScreenOcrScanner {
         }
     }
 
-    private void recognize(Bitmap bitmap, FishAccessibilityService.CaptureCallback callback) {
+    private void recognize(Bitmap bitmap, FishAccessibilityService.CaptureCallback callback, List<Rect> excluded) {
         try {
             recognizer.process(InputImage.fromBitmap(bitmap, 0))
                     .addOnSuccessListener(text -> {
@@ -85,7 +86,7 @@ final class ScreenOcrScanner {
                         for (Text.TextBlock block : text.getTextBlocks()) {
                             Rect bounds = block.getBoundingBox();
                             String content = FishAccessibilityService.cleanSocialHeaderPrefix(block.getText());
-                            if (bounds != null && !bounds.isEmpty()
+                            if (bounds != null && !bounds.isEmpty() && !overlapsControl(bounds, excluded)
                                     && !FishAccessibilityService.isUiNoiseBlock(content)) {
                                 blocks.add(new FishAccessibilityService.ScreenBlock(content, bounds,
                                         FishAccessibilityService.splitIntoSentences(content)));
@@ -106,8 +107,18 @@ final class ScreenOcrScanner {
         }
     }
 
+    private boolean overlapsControl(Rect bounds, List<Rect> excluded) {
+        for (Rect control : excluded) {
+            Rect overlap = new Rect(bounds);
+            if (overlap.intersect(control) && (long) overlap.width() * overlap.height()
+                    > (long) bounds.width() * bounds.height() / 3) return true;
+        }
+        return false;
+    }
+
     void close() {
         closed = true;
         recognizer.close();
     }
 }
+

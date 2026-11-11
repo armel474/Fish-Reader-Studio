@@ -29,6 +29,7 @@ public class FishAccessibilityService extends AccessibilityService {
         void onFailure(String message);
     }
     private ScreenOcrScanner ocrScanner;
+    private String lastForegroundPackage = "";
     private static volatile String lastCapturedScreenText = "";
     private static volatile String lastCopiedOrSelectedText = "";
     private static volatile List<ScreenBlock> lastCapturedBlocks = new ArrayList<>();
@@ -91,14 +92,14 @@ public class FishAccessibilityService extends AccessibilityService {
         }
         CharSequence pkgChar = event.getPackageName();
         String pkg = pkgChar != null ? pkgChar.toString() : "";
-        if ("app.fishreadv2".equals(pkg)) {
-            return;
-        }
         int eventType = event.getEventType();
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                && (!getPackageName().equals(pkg) || MainActivity.visible)) lastForegroundPackage = pkg;
         if (screenListener != null && (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED)) {
             screenListener.onScreenChanged(pkg, eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED);
         }
+        if (getPackageName().equals(pkg)) return;
         if (eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED
                 || eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
                 || eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -244,40 +245,97 @@ public class FishAccessibilityService extends AccessibilityService {
     }
 
     private AccessibilityNodeInfo findApplicationRoot() {
+        AccessibilityNodeInfo fallback = null;
         List<AccessibilityWindowInfo> windows = getWindows();
         if (windows != null) {
             for (AccessibilityWindowInfo window : windows) {
-                if (window.getType() == AccessibilityWindowInfo.TYPE_APPLICATION
-                        && (window.isActive() || window.isFocused())) {
-                    AccessibilityNodeInfo root = window.getRoot();
-                    if (root == null) continue;
-                    if (!getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
-                        return root;
-                    }
-                    root.recycle();
+                if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root == null) continue;
+                boolean own = getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName());
+                // Our popup menus may take focus; they are not a navigation to MainActivity.
+                if (own && !MainActivity.visible) { root.recycle(); continue; }
+                if (window.isActive() || window.isFocused()) {
+                    if (fallback != null) fallback.recycle();
+                    return root;
                 }
+                if (fallback == null && root.isVisibleToUser()) fallback = root;
+                else root.recycle();
             }
         }
+        if (fallback != null) return fallback;
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null && getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
-            root.recycle();
-            return null;
+        if (root != null && !MainActivity.visible
+                && getPackageName().contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) {
+            root.recycle(); return null;
         }
         return root;
     }
 
     public String getForegroundPackage() {
         AccessibilityNodeInfo root = findApplicationRoot();
+        if (root == null) return lastForegroundPackage;
+        try {
+            return root.getPackageName() == null ? lastForegroundPackage : root.getPackageName().toString();
+        } finally { root.recycle(); }
+    }
+
+    public String getDocumentScope() {
+        AccessibilityNodeInfo root = findApplicationRoot();
         if (root == null) return "";
         try {
-            return root.getPackageName() == null ? "" : root.getPackageName().toString();
+            String pkg = root.getPackageName() == null ? "" : root.getPackageName().toString();
+            if (pkg.isEmpty() || getPackageName().equals(pkg)) return "";
+            int id = root.getWindowId();
+            String title = "";
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows != null) for (AccessibilityWindowInfo window : windows) {
+                if (window.getId() == id && window.getTitle() != null) title = window.getTitle().toString();
+            }
+            return pkg + "|" + id + "|" + title;
+        } finally { root.recycle(); }
+    }
+
+    /** Best-effort scroll of the largest accessible content region, following a user swipe. */
+    public boolean scrollContent(boolean forward) {
+        AccessibilityNodeInfo root = findApplicationRoot();
+        if (root == null) return false;
+        List<AccessibilityNodeInfo> candidates = new ArrayList<>();
+        try {
+            collectScrollableNodes(root, candidates);
+            candidates.sort((a, b) -> {
+                Rect ra = new Rect(), rb = new Rect();
+                a.getBoundsInScreen(ra); b.getBoundsInScreen(rb);
+                return Long.compare((long) rb.width() * rb.height(), (long) ra.width() * ra.height());
+            });
+            for (AccessibilityNodeInfo node : candidates) {
+                if (node.performAction(forward ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                        : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return true;
+            }
+            return false;
         } finally {
+            for (AccessibilityNodeInfo node : candidates) node.recycle();
             root.recycle();
+        }
+    }
+
+    private void collectScrollableNodes(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> out) {
+        if (node.isVisibleToUser() && node.isScrollable()) out.add(AccessibilityNodeInfo.obtain(node));
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                collectScrollableNodes(child, out);
+                child.recycle();
+            }
         }
     }
 
     /** Called only after FishReader's own windows have been hidden. */
     public void captureScreen(CaptureCallback callback) {
+        if (getPackageName().equals(getForegroundPackage())) {
+            callback.onFailure("Ouvrez le document à lire dans une autre application avant de scanner.");
+            return;
+        }
         List<ScreenBlock> blocks = captureStructuredScreenBlocks();
         boolean coarseBounds = false;
         int height = getResources().getDisplayMetrics().heightPixels;
@@ -305,6 +363,36 @@ public class FishAccessibilityService extends AccessibilityService {
         }
     }
 
+    private boolean isUiControl(AccessibilityNodeInfo node) {
+        String role = node.getClassName() == null ? "" : node.getClassName().toString();
+        String text = node.getText() == null ? "" : node.getText().toString();
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        boolean shortControl = bounds.height() < getResources().getDisplayMetrics().heightPixels / 3;
+        if (role.endsWith("Button") && text.length() < 80 && shortControl) return true;
+        String id = node.getViewIdResourceName() == null ? "" : node.getViewIdResourceName().toLowerCase(java.util.Locale.ROOT);
+        boolean inputHint = node.getHintText() != null && node.getHintText().length() > 0;
+        return node.isEditable() && shortControl && (inputHint || id.matches(".*(composer|message_input|chat_input|search|prompt).*"));
+    }
+
+    public List<Rect> getNonContentBounds() {
+        List<Rect> excluded = new ArrayList<>();
+        AccessibilityNodeInfo root = findApplicationRoot();
+        if (root == null) return excluded;
+        try { collectNonContentBounds(root, excluded); }
+        finally { root.recycle(); }
+        return excluded;
+    }
+
+    private void collectNonContentBounds(AccessibilityNodeInfo node, List<Rect> excluded) {
+        if (node.isVisibleToUser() && isUiControl(node)) {
+            Rect bounds = new Rect(); node.getBoundsInScreen(bounds); excluded.add(bounds); return;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) { collectNonContentBounds(child, excluded); child.recycle(); }
+        }
+    }
+
     private void collectRawNodes(AccessibilityNodeInfo node, List<RawNodeBlock> out) {
         if (node == null) {
             return;
@@ -313,6 +401,8 @@ public class FishAccessibilityService extends AccessibilityService {
             if (!node.isVisibleToUser()) {
                 return;
             }
+            // Keep document editors such as Word; exclude only identifiable input controls.
+            if (isUiControl(node)) return;
             CharSequence pkg = node.getPackageName();
             if (pkg != null && "app.fishreadv2".equals(pkg.toString())) {
                 return;
@@ -430,7 +520,9 @@ public class FishAccessibilityService extends AccessibilityService {
         if (PURE_TIMESTAMP_OR_COUNTER_PATTERN.matcher(t).matches()) {
             return true;
         }
-        String lower = t.toLowerCase();
+        String lower = t.toLowerCase(java.util.Locale.ROOT);
+        if (t.length() < 120 && (lower.startsWith("message dans ") || lower.startsWith("demander à ")
+                || lower.startsWith("faire défiler jusqu") || lower.startsWith("écrire un message"))) return true;
         String[] exactNoise = new String[]{
                 "j'aime", "commenter", "partager", "envoyer", "suivre", "s'abonner",
                 "rechercher", "accueil", "notifications", "menu", "profil", "amis",
@@ -481,4 +573,5 @@ public class FishAccessibilityService extends AccessibilityService {
         return out;
     }
 }
+
 

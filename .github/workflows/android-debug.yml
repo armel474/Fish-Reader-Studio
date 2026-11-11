@@ -25,12 +25,30 @@ jobs:
         run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
       - name: Scan session regression tests
         run: sh android/tests/run.sh
+      - name: Reuse development signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: fishreader-personal-debug-signing-v1
       - name: Build debug APK and check Android lint
         working-directory: android
         run: sh gradlew assembleDebug lintDebug --no-daemon
+      - name: Verify the APK has no internet permission
+        working-directory: android
+        run: |
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump permissions app/build/outputs/apk/debug/app-debug.apk > build-permissions.txt
+          if grep -q 'android.permission.INTERNET' build-permissions.txt; then
+            cat build-permissions.txt
+            exit 1
+          fi
+      - name: Print lint errors if a check fails
+        if: failure()
+        working-directory: android
+        run: cat app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
-          name: FishReader-1.3-dev-debug
+          name: FishReader-1.4-dev-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+

@@ -56,6 +56,7 @@ public class FishVoiceEngine {
 
     public interface PlaybackListener {
         default void onPlaybackError(String message) {}
+        default void onSentenceCompleted(String sentence) {}
         void onStateChanged(boolean isPlaying, boolean isLoading, int currentSentenceIndex, int totalSentences, String currentSentence, String activeVoiceLabel, float speedMultiplier, int activeParagraphIndex);
     }
 
@@ -196,6 +197,9 @@ public class FishVoiceEngine {
                     @Override
                     public void run() {
                         if (gen == FishVoiceEngine.this.playbackGeneration && FishVoiceEngine.this.isPlaying) {
+                            if (FishVoiceEngine.this.listener != null && FishVoiceEngine.this.currentIndex < FishVoiceEngine.this.sentences.length) {
+                                FishVoiceEngine.this.listener.onSentenceCompleted(FishVoiceEngine.this.sentences[FishVoiceEngine.this.currentIndex]);
+                            }
                             FishVoiceEngine.this.advanceToNextSentence(gen);
                         }
                     }
@@ -763,4 +767,5 @@ public class FishVoiceEngine {
         }
     }
 }
+
 
